@@ -1,5 +1,5 @@
 /**
- * Country name/alias → centroid coordinates for globe centering.
+ * Country name/alias -> centroid coordinates for globe centering.
  * Coordinates are approximate country centroids (lat, lng).
  */
 
