@@ -7,6 +7,10 @@ import LeafletMap from './LeafletMap';
 interface MapProps {
   news: NewsItem[];
   interests: UserInterest[];
+  /** Parent's zoom (from onBoundsChange). Used for globe vs 2D threshold and for 2D map so zoom stays in sync. */
+  zoom?: number;
+  /** Parent's bounds (from onBoundsChange). Used for 2D map center so view stays in sync. */
+  currentBounds?: { getCenter: () => { lat: number; lng: number }; getNorth: () => number; getSouth: () => number; getEast: () => number; getWest: () => number } | null;
   onBoundsChange: (bounds: any, zoom: number) => void;
   onMarkerClick: (item: NewsItem) => void;
   showHeatmap: boolean;
@@ -56,6 +60,8 @@ const ATMOSPHERE_FRAGMENT_SHADER = `
 const Map = memo(function Map({
   news,
   interests,
+  zoom: zoomFromParent,
+  currentBounds,
   onBoundsChange,
   onMarkerClick,
   showHeatmap,
@@ -66,11 +72,15 @@ const Map = memo(function Map({
   const globeRef = useRef<any>(null);
   const starsRef = useRef<THREE.Points | null>(null);
   const starAnimationIdRef = useRef<number | null>(null);
+  const prevDetailedRef = useRef(false);
 
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [altitudeGroup, setAltitudeGroup] = useState(3);
   const [uiZoom, setUiZoom] = useState(3);
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number } | null>(null);
+
+  const effectiveZoom = zoomFromParent ?? uiZoom;
+  const isDetailedMap = effectiveZoom >= 5;
 
   useEffect(() => {
     if (!centerOn) return;
@@ -83,7 +93,7 @@ const Map = memo(function Map({
       getWest: () => lng - span / 2,
       getCenter: () => ({ lat, lng })
     };
-    if (uiZoom >= 7) {
+    if (isDetailedMap) {
       setMapCenter(centerOn);
       onBoundsChange(syntheticBounds, 5);
       onCenterComplete?.();
@@ -97,7 +107,7 @@ const Map = memo(function Map({
       onCenterComplete?.();
     }, 1100);
     return () => clearTimeout(t);
-  }, [centerOn, onCenterComplete, onBoundsChange]);
+  }, [centerOn, onCenterComplete, onBoundsChange, isDetailedMap]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -114,6 +124,7 @@ const Map = memo(function Map({
   }, []);
 
   useEffect(() => {
+    if (isDetailedMap || dimensions.width === 0) return;
     if (!globeRef.current) return;
 
     const scene = globeRef.current.scene();
@@ -218,14 +229,27 @@ const Map = memo(function Map({
     return () => {
       controls.removeEventListener('change', handleCameraChange);
     };
-  }, [onBoundsChange]);
+  }, [onBoundsChange, isDetailedMap, dimensions.width]);
+
+  useEffect(() => {
+    if (prevDetailedRef.current && !isDetailedMap && currentBounds) {
+      const center = currentBounds.getCenter();
+      setMapCenter({ lat: center.lat, lng: center.lng });
+      setUiZoom(4);
+      onBoundsChange(currentBounds, 4);
+      if (globeRef.current) {
+        globeRef.current.pointOfView({ lat: center.lat, lng: center.lng, altitude: 1.5 }, 0);
+      }
+    }
+    prevDetailedRef.current = isDetailedMap;
+  }, [isDetailedMap, onBoundsChange, currentBounds]);
 
   const ringsData = useMemo(() => {
     return [];
   }, [interests]);
 
   useEffect(() => {
-    if (!globeRef.current || dimensions.width === 0) return;
+    if (isDetailedMap || !globeRef.current || dimensions.width === 0) return;
 
     const scene = globeRef.current.scene();
     if (!scene) return;
@@ -324,7 +348,7 @@ const Map = memo(function Map({
         starAnimationIdRef.current = null;
       }
     };
-  }, [dimensions.width]);
+  }, [dimensions.width, isDetailedMap]);
 
   const visibleNews = useMemo(() => {
     return news.filter((item) => {
@@ -340,12 +364,14 @@ const Map = memo(function Map({
     );
   }, [interests]);
 
-  if (uiZoom >= 7) {
+  const effectiveCenter = currentBounds?.getCenter?.() ?? mapCenter ?? { lat: 0, lng: 0 };
+
+  if (isDetailedMap) {
     return (
       <div className="h-full w-full">
         <LeafletMap
-          center={mapCenter}
-          zoom={uiZoom + 2}
+          center={effectiveCenter}
+          zoom={Math.max(5, Math.min(18, effectiveZoom + 2))}
           news={visibleNews}
           onBoundsChange={onBoundsChange}
           onMarkerClick={onMarkerClick}

@@ -82,22 +82,23 @@ export default function App() {
     if (!bounds || applyCounter === 0) return;
 
     setIsLoading(true);
-
-    const data = await fetchNews(
-      activeCategory,
-      {
-        north: bounds.getNorth(),
-        south: bounds.getSouth(),
-        east: bounds.getEast(),
-        west: bounds.getWest()
-      },
-      zoom,
-      daysAgo,
-      interests
-    );
-
-    setNews(data);
-    setIsLoading(false);
+    try {
+      const data = await fetchNews(
+        activeCategory,
+        {
+          north: bounds.getNorth(),
+          south: bounds.getSouth(),
+          east: bounds.getEast(),
+          west: bounds.getWest()
+        },
+        zoom,
+        daysAgo,
+        interests
+      );
+      setNews(data);
+    } finally {
+      setIsLoading(false);
+    }
   }, [activeCategory, bounds, zoom, daysAgo, interests, applyCounter]);
 
   useEffect(() => {
@@ -106,7 +107,7 @@ export default function App() {
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [loadNews]);
+  }, [loadNews, bounds]);
 
   const handleBoundsChange = useCallback((newBounds: any, newZoom: number) => {
     setBounds(newBounds);
@@ -217,6 +218,8 @@ export default function App() {
         <Map
           news={news}
           interests={interests}
+          zoom={zoom}
+          currentBounds={bounds}
           onBoundsChange={handleBoundsChange}
           onMarkerClick={handleMarkerClick}
           showHeatmap={showHeatmap}

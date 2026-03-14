@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { MapContainer, TileLayer, CircleMarker, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, CircleMarker, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { NewsItem } from '../types';
 
@@ -11,28 +11,44 @@ interface LeafletMapProps {
   onMarkerClick: (item: NewsItem) => void;
 }
 
+/** Report bounds and zoom in same scale as globe (2–12) so parent state is consistent. */
 function BoundsReporter({ onBoundsChange }: { onBoundsChange: (bounds: any, zoom: number) => void }) {
+  const map = useMap();
+
+  const report = () => {
+    const b = map.getBounds();
+    const boundsProxy = {
+      getNorth: () => b.getNorth(),
+      getSouth: () => b.getSouth(),
+      getEast: () => b.getEast(),
+      getWest: () => b.getWest(),
+      getCenter: () => map.getCenter()
+    };
+    const leafletZoom = map.getZoom();
+    const normalizedZoom = Math.max(2, Math.min(12, leafletZoom - 2));
+    onBoundsChange(boundsProxy, normalizedZoom);
+  };
+
   useMapEvents({
-    moveend(map) {
-      const b = map.getBounds();
-      const boundsProxy = {
-        getNorth: () => b.getNorth(),
-        getSouth: () => b.getSouth(),
-        getEast: () => b.getEast(),
-        getWest: () => b.getWest(),
-        getCenter: () => map.getCenter()
-      };
-      onBoundsChange(boundsProxy, map.getZoom());
-    }
+    moveend: report,
+    zoomend: report
   });
+  return null;
+}
+
+/** Sync map view when parent passes new center/zoom (so zoom level stays in sync). */
+function SyncView({ center, zoom }: { center: { lat: number; lng: number }; zoom: number }) {
+  const map = useMap();
+  useEffect(() => {
+    map.setView([center.lat, center.lng], zoom);
+  }, [map, center.lat, center.lng, zoom]);
   return null;
 }
 
 export default function LeafletMap({ center, zoom, news, onBoundsChange, onMarkerClick }: LeafletMapProps) {
   const effectiveCenter = center ?? { lat: 0, lng: 0 };
-  const effectiveZoom = Math.max(3, Math.min(16, zoom));
+  const effectiveZoom = Math.max(2, Math.min(18, zoom));
 
-  // Ensure Leaflet container respects our dark background beneath tiles
   useEffect(() => {
     const root = document.getElementById('root');
     if (root) {
@@ -55,12 +71,11 @@ export default function LeafletMap({ center, zoom, news, onBoundsChange, onMarke
       zoomControl={false}
       attributionControl={false}
     >
-      {/* Base layer: CartoDB Voyager tiles (free, English labels) */}
+      <SyncView center={effectiveCenter} zoom={effectiveZoom} />
       <TileLayer
         url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"
       />
 
-      {/* Feature layer: news markers as hollow glowing rings */}
       {news.map((item) => (
         <CircleMarker
           key={item.id}
