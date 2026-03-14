@@ -59,10 +59,10 @@ export async function fetchNews(
   daysAgo: number = 0,
   interests: UserInterest[] = []
 ): Promise<NewsItem[]> {
-  try {
-    const centerLat = (bounds.north + bounds.south) / 2;
-    const centerLng = (bounds.east + bounds.west) / 2;
+  const centerLat = (bounds.north + bounds.south) / 2;
+  const centerLng = (bounds.east + bounds.west) / 2;
 
+  try {
     const params = new URLSearchParams({
       lat: String(centerLat),
       lng: String(centerLng),

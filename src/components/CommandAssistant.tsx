@@ -254,3 +254,4 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry }
 };
 
 export default CommandAssistant;
+

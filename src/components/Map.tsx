@@ -1,24 +1,22 @@
 import { useEffect, useRef, useState, useMemo, memo } from 'react';
 import Globe from 'react-globe.gl';
 import * as THREE from 'three';
+import { AnimatePresence, motion } from 'motion/react';
 import { NewsItem, UserInterest } from '../types';
 import LeafletMap from './LeafletMap';
+import CloudTransitionOverlay, { CLOUD_TRANSITION_DURATION_MS } from './CloudTransitionOverlay';
 
 interface MapProps {
   news: NewsItem[];
   interests: UserInterest[];
-  /** Parent's zoom (from onBoundsChange). Used for globe vs 2D threshold and for 2D map so zoom stays in sync. */
-  zoom?: number;
-  /** Parent's bounds (from onBoundsChange). Used for 2D map center so view stays in sync. */
-  currentBounds?: { getCenter: () => { lat: number; lng: number }; getNorth: () => number; getSouth: () => number; getEast: () => number; getWest: () => number } | null;
+  zoom: number;
+  currentBounds: { getCenter: () => { lat: number; lng: number }; getNorth: () => number; getSouth: () => number; getEast: () => number; getWest: () => number } | null;
   onBoundsChange: (bounds: any, zoom: number) => void;
   onMarkerClick: (item: NewsItem) => void;
   showHeatmap: boolean;
   showSentiment: boolean;
-  /** When set, globe flies to this point (e.g. from Command Assistant "Take me to X"). */
-  centerOn?: { lat: number; lng: number } | null;
-  /** Called after centering so App can clear centerOn. */
-  onCenterComplete?: () => void;
+  centerOn: { lat: number; lng: number } | null;
+  onCenterComplete: () => void;
 }
 
 const cartoDbUrl = (x: number, y: number, l: number) =>
@@ -60,32 +58,68 @@ const ATMOSPHERE_FRAGMENT_SHADER = `
 const Map = memo(function Map({
   news,
   interests,
-  zoom: zoomFromParent,
+  zoom: zoomFromApp,
   currentBounds,
   onBoundsChange,
   onMarkerClick,
   showHeatmap,
   showSentiment,
-  centerOn = null,
+  centerOn,
   onCenterComplete
 }: MapProps) {
   const globeRef = useRef<any>(null);
   const starsRef = useRef<THREE.Points | null>(null);
   const starAnimationIdRef = useRef<number | null>(null);
-  const prevDetailedRef = useRef(false);
+  const prevDetailedRef = useRef<boolean>(false);
+  const skipNextInitialBoundsPushRef = useRef<boolean>(false);
 
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [altitudeGroup, setAltitudeGroup] = useState(3);
   const [uiZoom, setUiZoom] = useState(3);
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number } | null>(null);
-  /** When switching from Leaflet to Globe, delay showing Globe so Leaflet can tear down first. */
-  const [showGlobeView, setShowGlobeView] = useState(true);
+  const isDetailedMap = zoomFromApp >= 5;
+  const [displayedIsDetailedMap, setDisplayedIsDetailedMap] = useState(() => isDetailedMap);
+  const [cloudPhase, setCloudPhase] = useState<'in' | 'out' | null>(null);
 
-  const effectiveZoom = zoomFromParent ?? uiZoom;
-  const isDetailedMap = effectiveZoom >= 5;
+  useEffect(() => {
+    if (isDetailedMap === displayedIsDetailedMap) return;
+    if (cloudPhase !== null) return;
+    setCloudPhase('in');
+  }, [isDetailedMap, displayedIsDetailedMap, cloudPhase]);
+
+  useEffect(() => {
+    if (cloudPhase !== 'in') return;
+    const t = setTimeout(() => {
+      setDisplayedIsDetailedMap(isDetailedMap);
+      setCloudPhase('out');
+    }, CLOUD_TRANSITION_DURATION_MS);
+    return () => clearTimeout(t);
+  }, [cloudPhase, isDetailedMap]);
+
+  useEffect(() => {
+    if (cloudPhase !== 'out') return;
+    const t = setTimeout(() => setCloudPhase(null), CLOUD_TRANSITION_DURATION_MS);
+    return () => clearTimeout(t);
+  }, [cloudPhase]);
+
+  useEffect(() => {
+    if (prevDetailedRef.current && !isDetailedMap && currentBounds) {
+      const center = currentBounds.getCenter();
+      skipNextInitialBoundsPushRef.current = true;
+      setAltitudeGroup(3);
+      setUiZoom(4);
+      setMapCenter({ lat: center.lat, lng: center.lng });
+      onBoundsChange(currentBounds, 4);
+      setTimeout(() => {
+        globeRef.current?.pointOfView({ lat: center.lat, lng: center.lng, altitude: 1.5 }, 0);
+      }, 50);
+    }
+    prevDetailedRef.current = isDetailedMap;
+  }, [isDetailedMap, onBoundsChange, currentBounds]);
 
   useEffect(() => {
     if (!centerOn) return;
+
     const { lat, lng } = centerOn;
     const span = 25;
     const syntheticBounds = {
@@ -95,21 +129,23 @@ const Map = memo(function Map({
       getWest: () => lng - span / 2,
       getCenter: () => ({ lat, lng })
     };
-    if (isDetailedMap) {
+
+    if (displayedIsDetailedMap) {
       setMapCenter(centerOn);
       onBoundsChange(syntheticBounds, 5);
-      onCenterComplete?.();
+      onCenterComplete();
       return;
     }
+
     globeRef.current?.pointOfView({ lat, lng, altitude: 1.2 }, 1000);
     const t = setTimeout(() => {
       setMapCenter(centerOn);
       setUiZoom(5);
       onBoundsChange(syntheticBounds, 5);
-      onCenterComplete?.();
+      onCenterComplete();
     }, 1100);
     return () => clearTimeout(t);
-  }, [centerOn, onCenterComplete, onBoundsChange, isDetailedMap]);
+  }, [centerOn, onCenterComplete, onBoundsChange, displayedIsDetailedMap]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -126,29 +162,7 @@ const Map = memo(function Map({
   }, []);
 
   useEffect(() => {
-    if (prevDetailedRef.current && !isDetailedMap && currentBounds) {
-      const center = currentBounds.getCenter();
-      setMapCenter({ lat: center.lat, lng: center.lng });
-      setUiZoom(4);
-      onBoundsChange(currentBounds, 4);
-      if (globeRef.current) {
-        globeRef.current.pointOfView({ lat: center.lat, lng: center.lng, altitude: 1.5 }, 0);
-      }
-    }
-    prevDetailedRef.current = isDetailedMap;
-  }, [isDetailedMap, onBoundsChange, currentBounds]);
-
-  useEffect(() => {
-    if (isDetailedMap) {
-      setShowGlobeView(false);
-      return;
-    }
-    const timeoutId = setTimeout(() => setShowGlobeView(true), 50);
-    return () => clearTimeout(timeoutId);
-  }, [isDetailedMap]);
-
-  useEffect(() => {
-    if (isDetailedMap || dimensions.width === 0) return;
+    if (displayedIsDetailedMap || dimensions.width === 0) return;
     if (!globeRef.current) return;
 
     const scene = globeRef.current.scene();
@@ -184,8 +198,26 @@ const Map = memo(function Map({
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
 
+    const initialLat = 20;
+    const initialLng = 20;
+    const initialAlt = 5.2;
     setTimeout(() => {
-      globeRef.current?.pointOfView({ lat: 20, lng: 20, altitude: 5.2 }, 0);
+      if (skipNextInitialBoundsPushRef.current) {
+        skipNextInitialBoundsPushRef.current = false;
+        return;
+      }
+      globeRef.current?.pointOfView({ lat: initialLat, lng: initialLng, altitude: initialAlt }, 0);
+      const span = 180;
+      onBoundsChange(
+        {
+          getNorth: () => initialLat + span / 2,
+          getSouth: () => initialLat - span / 2,
+          getEast: () => initialLng + span / 2,
+          getWest: () => initialLng - span / 2,
+          getCenter: () => ({ lat: initialLat, lng: initialLng })
+        },
+        2
+      );
     }, 100);
 
     let lastUiZoom = -1;
@@ -253,14 +285,14 @@ const Map = memo(function Map({
     return () => {
       controls.removeEventListener('change', handleCameraChange);
     };
-  }, [onBoundsChange, isDetailedMap, dimensions.width]);
+  }, [onBoundsChange, displayedIsDetailedMap, dimensions.width]);
 
   const ringsData = useMemo(() => {
     return [];
   }, [interests]);
 
   useEffect(() => {
-    if (isDetailedMap || !globeRef.current || dimensions.width === 0) return;
+    if (!globeRef.current || dimensions.width === 0) return;
 
     const scene = globeRef.current.scene();
     if (!scene) return;
@@ -359,7 +391,7 @@ const Map = memo(function Map({
         starAnimationIdRef.current = null;
       }
     };
-  }, [dimensions.width, isDetailedMap]);
+  }, [dimensions.width]);
 
   const visibleNews = useMemo(() => {
     return news.filter((item) => {
@@ -375,57 +407,72 @@ const Map = memo(function Map({
     );
   }, [interests]);
 
-  const effectiveCenter = currentBounds?.getCenter?.() ?? mapCenter ?? { lat: 0, lng: 0 };
-
-  if (isDetailedMap) {
-    return (
-      <div className="map-leaflet-container h-full w-full">
-        <LeafletMap
-          center={effectiveCenter}
-          zoom={Math.max(5, Math.min(18, effectiveZoom + 2))}
-          news={visibleNews}
-          onBoundsChange={onBoundsChange}
-          onMarkerClick={onMarkerClick}
-        />
-      </div>
-    );
-  }
-
-  if (!showGlobeView) {
-    return <div className="map-globe-container map-placeholder h-full w-full bg-black" />;
-  }
   return (
-    <div className="map-globe-container h-full w-full bg-black cursor-grab active:cursor-grabbing">
-      {dimensions.width > 0 && (
-        <Globe
-          ref={globeRef}
-          width={dimensions.width}
-          height={dimensions.height}
-          globeImageUrl="https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
-          bumpImageUrl="https://unpkg.com/three-globe/example/img/earth-topology.png"
-          backgroundImageUrl="https://unpkg.com/three-globe/example/img/night-sky.png"
-          globeTileEngineUrl={altitudeGroup !== 3 ? cartoDbUrl : undefined}
-          tilesTransitionDuration={1000}
-          pointsData={visibleNews}
-          pointLat="lat"
-          pointLng="lng"
-          pointColor={getPointColor}
-          pointAltitude={0.03}
-          pointRadius={getPointRadius}
-          pointsMerge={false}
-          onPointClick={(point) => onMarkerClick(point as NewsItem)}
-          htmlElementsData={[]}
-          ringsData={ringsData}
-          pathsData={visibleRoutes}
-          pathPoints={getPathPoints}
-          pathPointLat={(p: number[]) => p[0]}
-          pathPointLng={(p: number[]) => p[1]}
-          pathColor={getPathColor}
-          pathStroke={0.4}
-          pathDashLength={0.2}
-          pathDashGap={0.1}
-          pathDashAnimateTime={2000}
-        />
+    <div className="h-full w-full relative">
+      <AnimatePresence initial={false}>
+        {displayedIsDetailedMap ? (
+          <motion.div
+            key="leaflet"
+            className="absolute inset-0 h-full w-full"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.35, ease: 'easeInOut' }}
+          >
+            <LeafletMap
+              center={mapCenter}
+              zoom={zoomFromApp >= 5 ? Math.max(5, Math.min(18, zoomFromApp)) : uiZoom + 2}
+              news={visibleNews}
+              onBoundsChange={onBoundsChange}
+              onMarkerClick={onMarkerClick}
+            />
+          </motion.div>
+        ) : (
+          <motion.div
+            key="globe"
+            className="absolute inset-0 h-full w-full bg-black cursor-grab active:cursor-grabbing"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.35, ease: 'easeInOut' }}
+          >
+            {dimensions.width > 0 && (
+              <Globe
+                ref={globeRef}
+                width={dimensions.width}
+                height={dimensions.height}
+                globeImageUrl="https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
+                bumpImageUrl="https://unpkg.com/three-globe/example/img/earth-topology.png"
+                backgroundImageUrl="https://unpkg.com/three-globe/example/img/night-sky.png"
+                globeTileEngineUrl={altitudeGroup !== 3 ? cartoDbUrl : undefined}
+                tilesTransitionDuration={1000}
+                pointsData={visibleNews}
+                pointLat="lat"
+                pointLng="lng"
+                pointColor={getPointColor}
+                pointAltitude={0.03}
+                pointRadius={getPointRadius}
+                pointsMerge={false}
+                onPointClick={(point) => onMarkerClick(point as NewsItem)}
+                htmlElementsData={[]}
+                ringsData={ringsData}
+                pathsData={visibleRoutes}
+                pathPoints={getPathPoints}
+                pathPointLat={(p: number[]) => p[0]}
+                pathPointLng={(p: number[]) => p[1]}
+                pathColor={getPathColor}
+                pathStroke={0.4}
+                pathDashLength={0.2}
+                pathDashGap={0.1}
+                pathDashAnimateTime={2000}
+              />
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {cloudPhase !== null && (
+        <CloudTransitionOverlay phase={cloudPhase} />
       )}
     </div>
   );
