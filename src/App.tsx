@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Map from './components/Map';
 import NavigationHub from './components/NavigationHub';
 import CommandAssistant from './components/CommandAssistant';
@@ -109,9 +109,20 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [loadNews, bounds]);
 
+  const lastBoundsRef = useRef<{ zoom: number; lat: number; lng: number } | null>(null);
   const handleBoundsChange = useCallback((newBounds: any, newZoom: number) => {
+    const newC = newBounds?.getCenter?.();
+    const last = lastBoundsRef.current;
+    const zoomSame = last !== null && last.zoom === newZoom;
+    const centerSame =
+      last !== null &&
+      newC &&
+      Math.abs(last.lat - newC.lat) < 0.001 &&
+      Math.abs(last.lng - newC.lng) < 0.001;
+    if (zoomSame && centerSame) return;
+    lastBoundsRef.current = newC ? { zoom: newZoom, lat: newC.lat, lng: newC.lng } : null;
     setBounds(newBounds);
-    setZoom((prevZoom) => (prevZoom === newZoom ? prevZoom : newZoom));
+    setZoom(newZoom);
   }, []);
 
   const handleAnalyzeImage = async (file: File) => {
@@ -195,8 +206,6 @@ export default function App() {
   const handleCenterComplete = useCallback(() => {
     setCenterOn(null);
   }, []);
-
-  console.log('APP NEWS:', news);
 
   return (
     <div className={`relative h-full w-full bg-black font-sans text-white overflow-hidden ${isGlitching ? 'glitch-shake' : ''}`}>

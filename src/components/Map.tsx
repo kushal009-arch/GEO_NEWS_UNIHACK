@@ -78,6 +78,8 @@ const Map = memo(function Map({
   const [altitudeGroup, setAltitudeGroup] = useState(3);
   const [uiZoom, setUiZoom] = useState(3);
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number } | null>(null);
+  /** When switching from Leaflet to Globe, delay showing Globe so Leaflet can tear down first. */
+  const [showGlobeView, setShowGlobeView] = useState(true);
 
   const effectiveZoom = zoomFromParent ?? uiZoom;
   const isDetailedMap = effectiveZoom >= 5;
@@ -135,6 +137,15 @@ const Map = memo(function Map({
     }
     prevDetailedRef.current = isDetailedMap;
   }, [isDetailedMap, onBoundsChange, currentBounds]);
+
+  useEffect(() => {
+    if (isDetailedMap) {
+      setShowGlobeView(false);
+      return;
+    }
+    const timeoutId = setTimeout(() => setShowGlobeView(true), 50);
+    return () => clearTimeout(timeoutId);
+  }, [isDetailedMap]);
 
   useEffect(() => {
     if (isDetailedMap || dimensions.width === 0) return;
@@ -368,7 +379,7 @@ const Map = memo(function Map({
 
   if (isDetailedMap) {
     return (
-      <div className="h-full w-full">
+      <div className="map-leaflet-container h-full w-full">
         <LeafletMap
           center={effectiveCenter}
           zoom={Math.max(5, Math.min(18, effectiveZoom + 2))}
@@ -380,8 +391,11 @@ const Map = memo(function Map({
     );
   }
 
+  if (!showGlobeView) {
+    return <div className="map-globe-container map-placeholder h-full w-full bg-black" />;
+  }
   return (
-    <div className="h-full w-full bg-black cursor-grab active:cursor-grabbing">
+    <div className="map-globe-container h-full w-full bg-black cursor-grab active:cursor-grabbing">
       {dimensions.width > 0 && (
         <Globe
           ref={globeRef}
