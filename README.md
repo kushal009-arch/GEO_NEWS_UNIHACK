@@ -1,5 +1,5 @@
 
-# # GeoNews — UNIHACK
+# Geo_News_UNIHACK
 
 **Real-time global news visualization with AI-driven insights.**
 
