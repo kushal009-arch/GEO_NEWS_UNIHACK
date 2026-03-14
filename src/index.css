@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Space Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --color-neon-blue: #00f0ff;
+  --color-glass-bg: rgba(10, 15, 20, 0.7);
+  --color-glass-border: rgba(0, 240, 255, 0.2);
+}
+
 html,
 body,
 #root {
@@ -7,6 +15,98 @@ body,
   width: 100%;
   margin: 0;
   padding: 0;
+  overflow: hidden;
   background-color: #000;
   color: #fff;
+}
+
+/* Custom Scrollbar for inner elements */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+/* Themed scrollbar for Analytics board */
+.analytics-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 242, 255, 0.35) transparent;
+}
+.analytics-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.analytics-scroll::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+}
+.analytics-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0, 242, 255, 0.35);
+  border-radius: 3px;
+}
+.analytics-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 242, 255, 0.5);
+}
+
+/* Glassmorphism Utilities */
+.glass-panel {
+  background: var(--color-glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--color-glass-border);
+}
+
+.text-neon {
+  color: var(--color-neon-blue);
+  text-shadow: 0px 0px 8px rgba(0, 255, 255, 0.3);
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+@keyframes marquee {
+  0% { transform: translateX(0%); }
+  100% { transform: translateX(-50%); }
+}
+
+.animate-marquee {
+  animation: marquee 20s linear infinite;
+}
+
+.scanline-overlay {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.06) 0px,
+    rgba(255, 255, 255, 0.06) 1px,
+    transparent 2px,
+    transparent 4px
+  );
+  mix-blend-mode: soft-light;
+  opacity: 0.28;
+  pointer-events: none;
+  animation: scan-flicker 6s infinite steps(2, end);
+}
+
+@keyframes scan-flicker {
+  0%, 100% { opacity: 0.24; }
+  50% { opacity: 0.32; }
+}
+
+.glitch-shake {
+  animation: glitch-shake 320ms ease-out;
+}
+
+@keyframes glitch-shake {
+  0% { transform: translate3d(0, 0, 0); }
+  20% { transform: translate3d(-2px, 1px, 0); }
+  40% { transform: translate3d(2px, -1px, 0); }
+  60% { transform: translate3d(-1px, 2px, 0); }
+  80% { transform: translate3d(1px, -2px, 0); }
+  100% { transform: translate3d(0, 0, 0); }
 }
