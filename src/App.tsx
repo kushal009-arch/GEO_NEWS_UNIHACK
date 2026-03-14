@@ -321,6 +321,7 @@ export default function App() {
         onToggleInterest={handleToggleInterest}
         daysAgo={daysAgo}
         setDaysAgo={setDaysAgo}
+        news={news}
         onApplyFilters={() => setApplyCounter((prev) => prev + 1)}
         onSyncNews={async () => {
           // Manual sync: force-expire cache so Supabase + NewsAPI are both re-hit

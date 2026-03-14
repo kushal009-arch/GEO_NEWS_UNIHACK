@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { NewsCategory } from '../types';
+import { NewsCategory, NewsItem } from '../types';
 
 /** Sectors available inside the Analytics board (subset of NewsCategory). */
 type AnalyticsSector = 'Geopolitics' | 'Climate' | 'Business' | 'Technology';
@@ -22,6 +22,7 @@ import {
   Layers
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import StrategicDashboard from './StrategicDashboard';
 
 interface NavigationHubProps {
   activeCategory: NewsCategory;
@@ -36,6 +37,7 @@ interface NavigationHubProps {
   setDaysAgo: (value: number) => void;
   onApplyFilters: () => void;
   onSyncNews?: () => void;
+  news?: NewsItem[];
 }
 
 type DisplayCategory = {
@@ -200,7 +202,8 @@ export default function NavigationHub({
   daysAgo,
   setDaysAgo,
   onApplyFilters,
-  onSyncNews
+  onSyncNews,
+  news
 }: NavigationHubProps) {
   const [activeAnalyticsSector, setActiveAnalyticsSector] = useState<AnalyticsSector>('Geopolitics');
   const currentAnalytics = analyticsContent[activeAnalyticsSector] ?? analyticsContent.Geopolitics;
@@ -410,202 +413,9 @@ export default function NavigationHub({
 
       <AnimatePresence>
         {isAnalyticsOpen && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.98 }}
-            className="fixed inset-0 z-[100] bg-[rgba(0,0,0,0.45)] backdrop-blur-[20px] flex items-center justify-center p-4"
-          >
-            <div
-              ref={analyticsRef}
-              className="w-full max-w-[1000px] max-h-[80vh] flex flex-col rounded-[24px] border border-[rgba(255,255,255,0.1)] bg-[rgba(0,0,0,0.8)] backdrop-blur-[25px] shadow-[0_0_45px_rgba(0,0,0,0.85)] font-sans"
-            >
-              {/* Sticky header: title + sector tabs (instant switch) + close */}
-              <div className="sticky top-0 z-10 shrink-0 border-b border-white/10 bg-[rgba(0,0,0,0.9)] backdrop-blur-xl rounded-t-[24px] px-5 pt-4 pb-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-cyan-300 text-[10px] font-mono font-semibold uppercase tracking-[0.18em] mb-0.5">
-                      GEONEWS AI
-                    </div>
-                    <h2 className="text-[16px] font-semibold text-white tracking-tight leading-tight">
-                      {currentAnalytics.title}
-                    </h2>
-                  </div>
-                  <button
-                    onClick={() => setIsAnalyticsOpen(false)}
-                    className="shrink-0 rounded-full border border-white/10 bg-white/5 p-2 text-white/70 hover:text-white hover:bg-white/10 transition-colors"
-                    aria-label="Close Analytics"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-                {/* Category tabs: GEOPOLITICS, CLIMATE, ECONOMY, TECH - updates charts/data instantly (read-only view) */}
-                <nav className="mt-3 flex flex-wrap gap-0.5 border-b border-white/5 -mb-px" aria-label="Analytics sectors">
-                  {analyticsSectorTabs.map((tab) => {
-                    const isActive = activeAnalyticsSector === tab.value;
-                    return (
-                      <button
-                        key={tab.value}
-                        onClick={() => setActiveAnalyticsSector(tab.value)}
-                        type="button"
-                        className={`px-3 py-2 text-[11px] font-mono font-semibold uppercase tracking-[0.12em] transition-colors border-b-2 -mb-px ${
-                          isActive
-                            ? 'text-cyan-200 border-cyan-400'
-                            : 'text-white/60 border-transparent hover:text-white/90 hover:border-white/20'
-                        }`}
-                      >
-                        {tab.label}
-                      </button>
-                    );
-                  })}
-                </nav>
-              </div>
-
-              {/* Scrollable body: compact typography (12-14px data, 16px headers) */}
-              <div className="flex-1 overflow-y-auto overflow-x-hidden p-5 text-white analytics-scroll min-h-0">
-                <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-cyan-400/15 pb-3">
-                  <span className="text-cyan-300 text-[11px] font-mono font-semibold uppercase tracking-[0.16em]">
-                    Regional Volatility · Signal Layers
-                  </span>
-                  <div className="ml-auto flex flex-wrap gap-1.5">
-                    {['Live Conflict', 'Trade Routes', 'Climatic Anomalies'].map((pill) => (
-                      <span
-                        key={pill}
-                        className="rounded-full border border-cyan-400/25 bg-cyan-400/10 px-2.5 py-1 text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-cyan-200"
-                      >
-                        {pill}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 xl:grid-cols-[260px_1fr] gap-5">
-                  <div className="rounded-[16px] border border-cyan-400/15 bg-black/40 p-4 min-h-0">
-                    <div className="mb-3 text-cyan-300 text-[14px] font-semibold uppercase tracking-[0.14em]">
-                      Regional Volatility
-                    </div>
-                    <div className="space-y-4">
-                      {currentAnalytics.volatility.map((item) => (
-                        <div key={item.name} className="min-h-[40px]">
-                          <div className="mb-1 flex items-center justify-between text-[12px] uppercase tracking-[0.1em]">
-                            <span className="text-white/90">{item.name}</span>
-                            <span className={`font-semibold ${getLevelTextClass(item.level)}`}>
-                              {item.level}
-                            </span>
-                          </div>
-                          <div className="h-2.5 rounded-full bg-white/5 overflow-hidden border border-white/5">
-                            <div
-                              className={`h-full rounded-full ${getLevelBarClass(item.level)}`}
-                              style={{ width: `${item.value}%` }}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="space-y-5 min-w-0">
-                    <div className="rounded-[16px] border border-cyan-400/15 bg-black/40 p-4">
-                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-cyan-300 text-[14px] font-semibold uppercase tracking-[0.14em]">
-                          Vector Risk Heatmap
-                        </span>
-                        <span className="rounded-full border border-red-400/20 bg-red-400/10 px-2.5 py-1 text-[10px] font-mono font-semibold uppercase tracking-[0.12em] text-red-200">
-                          High-Risk Sectors
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-                        {currentAnalytics.sectors.map((sector, index) => (
-                          <div
-                            key={sector}
-                            className={`rounded-[12px] border p-3 min-h-[72px] ${
-                              index === 0 ? 'border-red-400/30 bg-red-400/10' : 'border-yellow-300/25 bg-yellow-300/8'
-                            }`}
-                          >
-                            <div className="mb-1.5 text-[12px] font-semibold uppercase tracking-[0.12em] text-white/90">
-                              {sector}
-                            </div>
-                            <div className="h-2 rounded-full bg-white/10 overflow-hidden">
-                              <div
-                                className={`h-full rounded-full ${index === 0 ? 'bg-red-400' : 'bg-yellow-300'}`}
-                                style={{ width: `${index === 0 ? 82 : index === 1 ? 58 : 44}%` }}
-                              />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                      <div className="rounded-[16px] border border-cyan-400/15 bg-black/40 p-4 min-h-0">
-                        <div className="mb-3 text-cyan-300 text-[14px] font-semibold uppercase tracking-[0.14em]">
-                          Neural Network Forecasts
-                        </div>
-                        <div className="rounded-[14px] border border-red-400/20 bg-red-400/10 p-4 min-h-[160px] flex flex-col">
-                          <div className="text-[12px] font-semibold uppercase tracking-[0.12em] text-white/90 mb-2">
-                            {currentAnalytics.forecastLeft.title}
-                          </div>
-                          <p className="text-[13px] text-white/85 leading-snug flex-1">
-                            {currentAnalytics.forecastLeft.text}
-                          </p>
-                          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                            <span className="rounded-full border border-red-400/25 px-2.5 py-1 text-[10px] font-mono font-semibold uppercase tracking-[0.1em] text-red-200">
-                              Confidence: {currentAnalytics.forecastLeft.confidence}
-                            </span>
-                            <button
-                              type="button"
-                              className="rounded-full border border-cyan-300/30 px-2.5 py-1 text-[10px] font-mono font-semibold uppercase tracking-[0.1em] text-cyan-200 hover:bg-cyan-400/20 transition-colors"
-                            >
-                              Focus Map
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="rounded-[16px] border border-cyan-400/15 bg-black/40 p-4 min-h-0">
-                        <div className="mb-3 text-cyan-300 text-[14px] font-semibold uppercase tracking-[0.14em]">
-                          Neural Network Forecasts
-                        </div>
-                        <div className="rounded-[14px] border border-cyan-400/20 bg-cyan-400/8 p-4 min-h-[160px] flex flex-col">
-                          <div className="text-[12px] font-semibold uppercase tracking-[0.12em] text-white/90 mb-2">
-                            {currentAnalytics.forecastRight.title}
-                          </div>
-                          <p className="text-[13px] text-white/85 leading-snug flex-1">
-                            {currentAnalytics.forecastRight.text}
-                          </p>
-                          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                            <span className="rounded-full border border-cyan-400/25 px-2.5 py-1 text-[10px] font-mono font-semibold uppercase tracking-[0.1em] text-cyan-200">
-                              Confidence: {currentAnalytics.forecastRight.confidence}
-                            </span>
-                            <button
-                              type="button"
-                              className="rounded-full border border-cyan-300/30 px-2.5 py-1 text-[10px] font-mono font-semibold uppercase tracking-[0.1em] text-cyan-200 hover:bg-cyan-400/20 transition-colors"
-                            >
-                              Focus Map
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </motion.div>
+          <StrategicDashboard onClose={() => setIsAnalyticsOpen(false)} news={news} />
         )}
       </AnimatePresence>
     </>
   );
-}
-
-function getLevelTextClass(level: string) {
-  if (level === 'Severe') return 'text-red-400';
-  if (level === 'High') return 'text-yellow-300';
-  return 'text-cyan-300';
-}
-
-function getLevelBarClass(level: string) {
-  if (level === 'Severe') return 'bg-red-400';
-  if (level === 'High') return 'bg-yellow-300';
-  return 'bg-cyan-300';
 }
