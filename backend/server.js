@@ -242,7 +242,7 @@ function radiusByZoom(zoom) {
 }
 
 app.get("/", (req, res) => {
-    res.send("Backend is running 🚀");
+    res.send("Backend is running!");
 });
 
 app.get("/api/news", (req, res) => {

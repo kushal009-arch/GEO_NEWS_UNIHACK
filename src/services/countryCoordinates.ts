@@ -1,5 +1,5 @@
 /**
- * Country name/alias → centroid coordinates for globe centering.
+ * Country name/alias - centroid coordinates for globe centering.
  * Coordinates are approximate country centroids (lat, lng).
  */
 
@@ -9,7 +9,7 @@ export interface CountryCoords {
   canonicalName: string;
 }
 
-const COUNTRY_ENTRIES: { names: string[]; lat: number; lng: number }[] = [
+export const COUNTRY_ENTRIES: { names: string[]; lat: number; lng: number }[] = [
   { names: ['india'], lat: 20.5937, lng: 78.9629 },
   { names: ['united states', 'usa', 'u.s.a.', 'us', 'america', 'united states of america'], lat: 37.0902, lng: -95.7129 },
   { names: ['china'], lat: 35.8617, lng: 104.1954 },

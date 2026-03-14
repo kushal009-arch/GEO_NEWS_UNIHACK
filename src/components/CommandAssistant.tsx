@@ -5,6 +5,9 @@ import {
   stripGotoTag,
   extractGotoCountry
 } from '../services/countryCoordinates';
+import { askAssistant } from '../services/aiService';
+import { supabase } from '../lib/supabaseClient';
+import { NewsItem } from '../types';
 
 type ChatMessage = {
   id: number;
@@ -73,7 +76,7 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry }
   const [input, setInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const trimmed = input.trim();
     if (!trimmed) return;
 
@@ -86,34 +89,77 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry }
     const lower = trimmed.toLowerCase();
     const countryCanonical = getCountryFromPhrase(trimmed);
 
-    const buildReply = (): string => {
+    try {
       if (countryCanonical) {
         const displayName = capitalizeCountry(countryCanonical);
-        return `Taking you to ${displayName}. ##GOTO:${countryCanonical}`;
+        const rawReply = `Taking you to ${displayName}. ##GOTO:${countryCanonical}`;
+        const countryFromTag = extractGotoCountry(rawReply);
+        const displayText = stripGotoTag(rawReply);
+
+        if (countryFromTag && onCenterOnCountry) {
+          onCenterOnCountry(countryFromTag);
+        }
+
+        const reply: ChatMessage = {
+          id: nextId + 1,
+          from: 'assistant',
+          text: displayText,
+        };
+        setMessages((prev) => [...prev, reply]);
+        setIsThinking(false);
+        return;
       }
+
+      // Check FAQ first
       const match = FAQ.find((item) => item.keywords.some((kw) => lower.includes(kw)));
-      return match
-        ? match.answer
-        : 'Routing to Intelligence Core... (This prototype build uses a local help model only.)';
-    };
-
-    setTimeout(() => {
-      const rawReply = buildReply();
-      const countryFromTag = extractGotoCountry(rawReply);
-      const displayText = stripGotoTag(rawReply);
-
-      if (countryFromTag && onCenterOnCountry) {
-        onCenterOnCountry(countryFromTag);
+      if (match) {
+        const reply: ChatMessage = {
+          id: nextId + 1,
+          from: 'assistant',
+          text: match.answer,
+        };
+        setMessages((prev) => [...prev, reply]);
+        setIsThinking(false);
+        return;
       }
+
+      // Fetch news for context
+      const { data: newsData } = await supabase
+        .from("news_events")
+        .select("*")
+        .limit(10);
+      
+      const newsContext = (newsData || []).map((n: any) => ({
+        title: n.title,
+        category: n.category,
+        sentiment: n.sentiment
+      }));
+
+      // Call Groq AI Assistant
+      const aiResponse = await askAssistant(trimmed, {
+        timestamp: new Date().toISOString(),
+        location: countryCanonical || "Global",
+        mission: "What's next - analyze big-picture strategic impact",
+        newsEvents: newsContext
+      });
 
       const reply: ChatMessage = {
         id: nextId + 1,
         from: 'assistant',
-        text: displayText,
+        text: aiResponse,
       };
       setMessages((prev) => [...prev, reply]);
+    } catch (error) {
+      console.error("Assistant Error:", error);
+      const errorReply: ChatMessage = {
+        id: nextId + 1,
+        from: 'assistant',
+        text: "I'm having trouble connecting to the intelligence core. Please try again later.",
+      };
+      setMessages((prev) => [...prev, errorReply]);
+    } finally {
       setIsThinking(false);
-    }, 350);
+    }
   };
 
   const handleQuickAction = (prompt: string) => {

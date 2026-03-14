@@ -20,6 +20,7 @@ export interface NewsItem {
   timestamp: string;
   importance: number; // 1-5
   sentiment: "Positive" | "Neutral" | "Negative" | "Anxious" | "Panic" | "Celebratory";
+  locationLabel?: string;
 }
 
 export interface TrendAnalysis {

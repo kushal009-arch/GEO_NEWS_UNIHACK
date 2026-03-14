@@ -9,9 +9,8 @@
 }
 
 html, body, #root {
-  height: 100%;
-  min-height: 100vh;
-  width: 100%;
+  height: 100vh;
+  width: 100vw;
   margin: 0;
   padding: 0;
   overflow: hidden; /* Hide all scrollbars */
@@ -19,7 +18,7 @@ html, body, #root {
   color: #fff;
 }
 
-/* Map containers: absolute positioning so Globe and Leaflet don’t collapse during transition */
+/* Map containers: absolute positioning so Globe and Leaflet don't collapse during transition */
 .map-globe-container,
 .map-leaflet-container {
   position: absolute;
@@ -46,7 +45,7 @@ html, body, #root {
   border-radius: 4px;
 }
 
-/* Themed scrollbar for Analytics board – clean, visible, matches glass panel */
+/* Themed scrollbar for Analytics board - clean, visible, matches glass panel */
 .analytics-scroll {
   scrollbar-width: thin;
   scrollbar-color: rgba(0, 242, 255, 0.35) transparent;
@@ -139,4 +138,15 @@ html, body, #root {
   60% { transform: translate3d(-1px, 2px, 0); }
   80% { transform: translate3d(1px, -2px, 0); }
   100% { transform: translate3d(0, 0, 0); }
+}
+
+/* Global Leaflet Marker Fixes */
+.leaflet-marker-pane {
+  z-index: 600 !important;
+}
+.leaflet-tile-pane {
+  z-index: 200 !important;
+}
+.custom-neon-marker {
+  z-index: 1000 !important;
 }

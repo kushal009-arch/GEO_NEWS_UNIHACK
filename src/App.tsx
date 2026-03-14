@@ -3,14 +3,14 @@ import Map from './components/Map';
 import NavigationHub from './components/NavigationHub';
 import CommandAssistant from './components/CommandAssistant';
 import { NewsCategory, NewsItem, TrendAnalysis, UserInterest } from './types';
-import { fetchNews, analyzeTrends, analyzeImage, deepResearch } from './services/newsService';
+import { fetchNewsFromSupabase, analyzeTrends, analyzeImage, deepResearch, syncLatestNews, isSyncNeeded, markSyncDone, invalidateNewsCache, getLocationLabel } from './services/newsService';
 import { getCountryCoordinates } from './services/countryCoordinates';
-import { Loader2, X, AlertCircle, Globe, Zap } from 'lucide-react';
+import { Loader2, X, AlertCircle, Globe, Zap, MapPin } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
 
 export default function App() {
-  const [activeCategory, setActiveCategory] = useState<NewsCategory>('Geopolitics');
+  const [activeCategory, setActiveCategory] = useState<NewsCategory>('Just In');
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [selectedInterests, setSelectedInterests] = useState<string[]>(['Energy', 'Shipping']);
@@ -19,7 +19,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [bounds, setBounds] = useState<any>(null);
-  const [zoom, setZoom] = useState(3);
+  const [zoom, setZoom] = useState(4); // Emergency Recovery: Initial Zoom 4
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
 
   const [imageAnalysis, setImageAnalysis] = useState<string | null>(null);
@@ -27,12 +27,14 @@ export default function App() {
 
   const [isDeepResearching, setIsDeepResearching] = useState(false);
   const [researchReport, setResearchReport] = useState<string | null>(null);
+  const [locationLabel, setLocationLabel] = useState<string | null>(null);
   const [isGlitching, setIsGlitching] = useState(false);
 
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [showSentiment, setShowSentiment] = useState(false);
   const [daysAgo, setDaysAgo] = useState(0);
-  const [applyCounter, setApplyCounter] = useState(0);
+  // Start at 1 so news loads automatically as soon as the map reports its bounds
+  const [applyCounter, setApplyCounter] = useState(1);
   const [centerOn, setCenterOn] = useState<{ lat: number; lng: number } | null>(null);
 
   const [interests, setInterests] = useState<UserInterest[]>([
@@ -79,17 +81,25 @@ export default function App() {
   }, []);
 
   const loadNews = useCallback(async () => {
-    if (!bounds || applyCounter === 0) return;
+    if (applyCounter === 0) return;
+
+    // Use world-wide bounds when map hasn't reported yet (initial render)
+    const effectiveBounds = bounds ?? {
+      getNorth: () => 85,
+      getSouth: () => -85,
+      getEast: () => 180,
+      getWest: () => -180,
+    };
 
     setIsLoading(true);
     try {
-      const data = await fetchNews(
+      const data = await fetchNewsFromSupabase(
         activeCategory,
         {
-          north: bounds.getNorth(),
-          south: bounds.getSouth(),
-          east: bounds.getEast(),
-          west: bounds.getWest()
+          north: effectiveBounds.getNorth(),
+          south: effectiveBounds.getSouth(),
+          east: effectiveBounds.getEast(),
+          west: effectiveBounds.getWest()
         },
         zoom,
         daysAgo,
@@ -101,13 +111,31 @@ export default function App() {
     }
   }, [activeCategory, bounds, zoom, daysAgo, interests, applyCounter]);
 
+  // One-time startup: sync NewsAPI to Supabase only when the server-side 30-min
+  // window has elapsed. Shared across ALL users - if another user synced recently,
+  // everyone skips NewsAPI. News loads instantly from the localStorage cache.
+  useEffect(() => {
+    const init = async () => {
+      const syncDue = await isSyncNeeded();
+      if (syncDue) {
+        await syncLatestNews().catch(console.error);
+        markSyncDone();
+        invalidateNewsCache(); // reload fresh Supabase data after sync
+      }
+      loadNews();
+    };
+    init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Reload news whenever filters or bounds change (debounced)
   useEffect(() => {
     const timer = setTimeout(() => {
       loadNews();
-    }, 500);
+    }, 400);
 
     return () => clearTimeout(timer);
-  }, [loadNews, bounds]);
+  }, [loadNews]);
 
   const lastBoundsRef = useRef<{ zoom: number; lat: number; lng: number } | null>(null);
   const handleBoundsChange = useCallback((newBounds: any, newZoom: number) => {
@@ -122,7 +150,8 @@ export default function App() {
     if (zoomSame && centerSame) return;
     lastBoundsRef.current = newC ? { zoom: newZoom, lat: newC.lat, lng: newC.lng } : null;
     setBounds(newBounds);
-    setZoom(newZoom);
+    // Explicitly clamp parent state to project limits
+    setZoom(Math.max(1, Math.min(10, newZoom)));
   }, []);
 
   const handleAnalyzeImage = async (file: File) => {
@@ -180,14 +209,17 @@ export default function App() {
   const closeNewsModal = useCallback(() => {
     setSelectedNews(null);
     setResearchReport(null);
+    setLocationLabel(null);
   }, []);
 
   const handleMarkerClick = useCallback((item: NewsItem) => {
     setSelectedNews(item);
     setResearchReport(null);
+    setLocationLabel(null);
     setIsGlitching(true);
-
     setTimeout(() => setIsGlitching(false), 320);
+    // Fetch location label in background
+    getLocationLabel(item.lat, item.lng).then(setLocationLabel).catch(() => {});
   }, []);
 
   const handleToggleInterest = useCallback((interest: string) => {
@@ -221,6 +253,15 @@ export default function App() {
         daysAgo={daysAgo}
         setDaysAgo={setDaysAgo}
         onApplyFilters={() => setApplyCounter((prev) => prev + 1)}
+        onSyncNews={async () => {
+          // Manual sync: force-expire cache so Supabase + NewsAPI are both re-hit
+          setIsLoading(true);
+          invalidateNewsCache();
+          await syncLatestNews().catch(console.error);
+          markSyncDone();
+          await loadNews();
+          setIsLoading(false);
+        }}
       />
 
       <main className="absolute inset-0 z-[1]">
@@ -235,6 +276,7 @@ export default function App() {
           showSentiment={showSentiment}
           centerOn={centerOn}
           onCenterComplete={handleCenterComplete}
+          activeCategory={activeCategory}
         />
       </main>
 
@@ -270,7 +312,15 @@ export default function App() {
                   </span>
                 </div>
 
-                <div className="flex flex-wrap gap-2 mt-2">
+                {/* Location label */}
+                <div className="flex items-center gap-1.5 text-white/55">
+                  <MapPin size={11} className="shrink-0" />
+                  <span className="text-[10px] font-mono tracking-wide">
+                    {locationLabel ?? `${selectedNews.lat.toFixed(2)}°, ${selectedNews.lng.toFixed(2)}°`}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-2 mt-1">
                   <span className="px-2 py-1 bg-white/10 text-gray-300 text-[9px] font-bold rounded uppercase tracking-wider">
                     {selectedNews.category}
                   </span>
@@ -401,13 +451,21 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <div className="fixed bottom-8 right-8 bg-black/50 backdrop-blur-sm px-3 py-1.5 rounded-lg border border-white/10 text-[10px] text-gray-400 z-[10] pointer-events-none">
-        {zoom > 10 ? 'Local View' : zoom > 5 ? 'Regional View' : 'Global View'} (Zoom: {zoom})
-      </div>
+      <AnimatePresence>
+        {!selectedNews && (
+          <motion.div
+            key="assistant"
+            initial={{ opacity: 0, scale: 0.85, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.85, y: 8 }}
+            transition={{ duration: 0.18 }}
+          >
+            <CommandAssistant onCenterOnCountry={handleCenterOnCountry} />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      <CommandAssistant onCenterOnCountry={handleCenterOnCountry} />
-
-      <div className="scanline-overlay fixed inset-0 z-[500]" />
+      <div className="scanline-overlay fixed inset-0 z-[10000] pointer-events-none" />
     </div>
   );
 }
