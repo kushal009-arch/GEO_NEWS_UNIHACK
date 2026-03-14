@@ -1,38 +1,59 @@
-import { useEffect, useRef, useState, useMemo, memo } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback, memo } from 'react';
 import Globe from 'react-globe.gl';
 import * as THREE from 'three';
-import { AnimatePresence, motion } from 'motion/react';
-import { NewsItem, UserInterest } from '../types';
+import { NewsItem, UserInterest, NewsCategory } from '../types';
 import LeafletMap from './LeafletMap';
-import CloudTransitionOverlay, { CLOUD_TRANSITION_DURATION_MS } from './CloudTransitionOverlay';
 
 interface MapProps {
   news: NewsItem[];
   interests: UserInterest[];
-  zoom: number;
-  currentBounds: { getCenter: () => { lat: number; lng: number }; getNorth: () => number; getSouth: () => number; getEast: () => number; getWest: () => number } | null;
+  /** Parent's zoom (from onBoundsChange). Used for globe vs 2D threshold and for 2D map so zoom stays in sync. */
+  zoom?: number;
+  /** Parent's bounds (from onBoundsChange). Used for 2D map center so view stays in sync. */
+  currentBounds?: { getCenter: () => { lat: number; lng: number }; getNorth: () => number; getSouth: () => number; getEast: () => number; getWest: () => number } | null;
   onBoundsChange: (bounds: any, zoom: number) => void;
   onMarkerClick: (item: NewsItem) => void;
   showHeatmap: boolean;
   showSentiment: boolean;
-  centerOn: { lat: number; lng: number } | null;
-  onCenterComplete: () => void;
+  /** When set, globe flies to this point (e.g. from Command Assistant "Take me to X"). */
+  centerOn?: { lat: number; lng: number } | null;
+  /** Called after centering so App can clear centerOn. */
+  onCenterComplete?: () => void;
+  /** Active category - dims non-matching globe markers for focus */
+  activeCategory?: NewsCategory;
 }
 
 const cartoDbUrl = (x: number, y: number, l: number) =>
   `https://a.basemaps.cartocdn.com/rastertiles/voyager/${l}/${x}/${y}.png`;
 
-const getPointColor = (d: object) => {
-  const item = d as NewsItem;
-
-  if (item.sentiment === 'Negative' || item.sentiment === 'Panic') return '#ff4d4f';
-  if (item.sentiment === 'Anxious') return '#facc15';
-  if (item.sentiment === 'Positive' || item.sentiment === 'Celebratory') return '#22c55e';
-
-  return '#00f0ff';
+// Intelligence dashboard palette per category
+const CATEGORY_COLORS: Record<string, string> = {
+  Geopolitics: '#ff4d4d',
+  Business:    '#f1c40f',
+  Technology:  '#00d4ff',
+  Climate:     '#2ecc71',
 };
 
-const getPointRadius = (d: object) => ((d as NewsItem).importance >= 4 ? 0.18 : 0.1);
+// Location pin SVG marker
+function makeLocationPinSvg(color: string, size: number): string {
+  const h = Math.round(size * 1.5);
+  const cx = size / 2;
+  const r = Math.round(size * 0.4);
+  const innerR = Math.round(r * 0.45);
+  return `<svg width="${size}" height="${h}" viewBox="0 0 ${size} ${h}" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <radialGradient id="glow_${color.replace('#','')}" cx="50%" cy="40%" r="60%">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.9"/>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0.6"/>
+      </radialGradient>
+    </defs>
+    <path d="M${cx} ${h - 2} C${cx} ${h - 2} ${size - 2} ${r + 4} ${size - 2} ${r + 2} C${size - 2} ${2} ${2} ${2} ${2} ${r + 2} C${2} ${r + 4} ${cx} ${h - 2} ${cx} ${h - 2}Z"
+      fill="url(#glow_${color.replace('#','')})"/>
+    <path d="M${cx} ${h - 2} C${cx} ${h - 2} ${size - 2} ${r + 4} ${size - 2} ${r + 2} C${size - 2} ${2} ${2} ${2} ${2} ${r + 2} C${2} ${r + 4} ${cx} ${h - 2} ${cx} ${h - 2}Z"
+      fill="none" stroke="white" stroke-opacity="0.3" stroke-width="0.5"/>
+    <circle cx="${cx}" cy="${r + 2}" r="${innerR}" fill="white" fill-opacity="0.9"/>
+  </svg>`;
+}
 
 const getPathPoints = (d: object) => (d as UserInterest).coords ?? [];
 const getPathColor = () => 'rgba(0, 240, 255, 0.6)';
@@ -58,68 +79,56 @@ const ATMOSPHERE_FRAGMENT_SHADER = `
 const Map = memo(function Map({
   news,
   interests,
-  zoom: zoomFromApp,
+  zoom: zoomFromParent,
   currentBounds,
   onBoundsChange,
   onMarkerClick,
   showHeatmap,
   showSentiment,
-  centerOn,
-  onCenterComplete
+  centerOn = null,
+  onCenterComplete,
+  activeCategory,
 }: MapProps) {
   const globeRef = useRef<any>(null);
   const starsRef = useRef<THREE.Points | null>(null);
   const starAnimationIdRef = useRef<number | null>(null);
-  const prevDetailedRef = useRef<boolean>(false);
-  const skipNextInitialBoundsPushRef = useRef<boolean>(false);
+  const prevDetailedRef = useRef(false);
+  const isInitialPOVSetRef = useRef(false);
 
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [altitudeGroup, setAltitudeGroup] = useState(3);
   const [uiZoom, setUiZoom] = useState(3);
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number } | null>(null);
-  const isDetailedMap = zoomFromApp >= 5;
-  const [displayedIsDetailedMap, setDisplayedIsDetailedMap] = useState(() => isDetailedMap);
-  const [cloudPhase, setCloudPhase] = useState<'in' | 'out' | null>(null);
+  const [filterFading, setFilterFading] = useState(false);
+  const prevCategoryRef = useRef(activeCategory);
 
   useEffect(() => {
-    if (isDetailedMap === displayedIsDetailedMap) return;
-    if (cloudPhase !== null) return;
-    setCloudPhase('in');
-  }, [isDetailedMap, displayedIsDetailedMap, cloudPhase]);
-
-  useEffect(() => {
-    if (cloudPhase !== 'in') return;
-    const t = setTimeout(() => {
-      setDisplayedIsDetailedMap(isDetailedMap);
-      setCloudPhase('out');
-    }, CLOUD_TRANSITION_DURATION_MS);
-    return () => clearTimeout(t);
-  }, [cloudPhase, isDetailedMap]);
-
-  useEffect(() => {
-    if (cloudPhase !== 'out') return;
-    const t = setTimeout(() => setCloudPhase(null), CLOUD_TRANSITION_DURATION_MS);
-    return () => clearTimeout(t);
-  }, [cloudPhase]);
-
-  useEffect(() => {
-    if (prevDetailedRef.current && !isDetailedMap && currentBounds) {
-      const center = currentBounds.getCenter();
-      skipNextInitialBoundsPushRef.current = true;
-      setAltitudeGroup(3);
-      setUiZoom(4);
-      setMapCenter({ lat: center.lat, lng: center.lng });
-      onBoundsChange(currentBounds, 4);
-      setTimeout(() => {
-        globeRef.current?.pointOfView({ lat: center.lat, lng: center.lng, altitude: 1.5 }, 0);
-      }, 50);
+    if (prevCategoryRef.current !== activeCategory) {
+      prevCategoryRef.current = activeCategory;
+      setFilterFading(true);
+      const t = setTimeout(() => setFilterFading(false), 300);
+      return () => clearTimeout(t);
     }
-    prevDetailedRef.current = isDetailedMap;
-  }, [isDetailedMap, onBoundsChange, currentBounds]);
+  }, [activeCategory]);
+
+  const effectiveZoom = zoomFromParent ?? uiZoom;
+
+  // Hysteresis: enter Leaflet at zoom >= 6.3, leave at zoom < 5.5
+  // Prevents snapping/flickering at the transition boundary
+  const [isDetailedMap, setIsDetailedMap] = useState(false);
+  const showGlobe = !isDetailedMap;
+
+  useEffect(() => {
+    setIsDetailedMap(prev => {
+      if (!prev && effectiveZoom >= 6.3) return true;
+      if (prev && effectiveZoom < 5.5) return false;
+      return prev;
+    });
+  }, [effectiveZoom]);
+
 
   useEffect(() => {
     if (!centerOn) return;
-
     const { lat, lng } = centerOn;
     const span = 25;
     const syntheticBounds = {
@@ -129,23 +138,21 @@ const Map = memo(function Map({
       getWest: () => lng - span / 2,
       getCenter: () => ({ lat, lng })
     };
-
-    if (displayedIsDetailedMap) {
+    if (isDetailedMap) {
       setMapCenter(centerOn);
-      onBoundsChange(syntheticBounds, 5);
-      onCenterComplete();
+      onBoundsChange(syntheticBounds, 8); // Stay in detailed view at city level
+      onCenterComplete?.();
       return;
     }
-
     globeRef.current?.pointOfView({ lat, lng, altitude: 1.2 }, 1000);
     const t = setTimeout(() => {
       setMapCenter(centerOn);
-      setUiZoom(5);
-      onBoundsChange(syntheticBounds, 5);
-      onCenterComplete();
+      setUiZoom(6.1); // Slightly above 6 to trigger transition
+      onBoundsChange(syntheticBounds, 6.1);
+      onCenterComplete?.();
     }, 1100);
     return () => clearTimeout(t);
-  }, [centerOn, onCenterComplete, onBoundsChange, displayedIsDetailedMap]);
+  }, [centerOn, onCenterComplete, onBoundsChange, isDetailedMap]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -162,7 +169,29 @@ const Map = memo(function Map({
   }, []);
 
   useEffect(() => {
-    if (displayedIsDetailedMap || dimensions.width === 0) return;
+    if (prevDetailedRef.current && !isDetailedMap && currentBounds) {
+      const center = currentBounds.getCenter();
+      setMapCenter({ lat: center.lat, lng: center.lng });
+      // Remove hardcoded setUiZoom(4) reset
+      if (globeRef.current) {
+        globeRef.current.pointOfView({ lat: center.lat, lng: center.lng, altitude: 2.0 }, 0);
+      }
+    }
+    prevDetailedRef.current = isDetailedMap;
+  }, [isDetailedMap, onBoundsChange, currentBounds]);
+
+  // Removed conditional visibility logic that caused rerenders
+  useEffect(() => {
+    if (!isDetailedMap) {
+      const scene = globeRef.current?.scene();
+      if (scene && starsRef.current) {
+        scene.add(starsRef.current);
+      }
+    }
+  }, [isDetailedMap]);
+
+  useEffect(() => {
+    if (isDetailedMap || dimensions.width === 0) return;
     if (!globeRef.current) return;
 
     const scene = globeRef.current.scene();
@@ -198,32 +227,21 @@ const Map = memo(function Map({
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
 
-    const initialLat = 20;
-    const initialLng = 20;
-    const initialAlt = 5.2;
-    setTimeout(() => {
-      if (skipNextInitialBoundsPushRef.current) {
-        skipNextInitialBoundsPushRef.current = false;
-        return;
-      }
-      globeRef.current?.pointOfView({ lat: initialLat, lng: initialLng, altitude: initialAlt }, 0);
-      const span = 180;
-      onBoundsChange(
-        {
-          getNorth: () => initialLat + span / 2,
-          getSouth: () => initialLat - span / 2,
-          getEast: () => initialLng + span / 2,
-          getWest: () => initialLng - span / 2,
-          getCenter: () => ({ lat: initialLat, lng: initialLng })
-        },
-        2
-      );
-    }, 100);
+    // Only set initial POV if not already set or centered
+    // Default: Asia-Pacific region
+    if (!isInitialPOVSetRef.current && !centerOn) {
+      setTimeout(() => {
+        globeRef.current?.pointOfView({ lat: 15, lng: 115, altitude: 2.5 }, 0);
+        isInitialPOVSetRef.current = true;
+      }, 500);
+    }
 
     let lastUiZoom = -1;
     let lastAltitudeGroup = -1;
     let lastLat = 999;
     let lastLng = 999;
+    let lastCenterLat = 999;
+    let lastCenterLng = 999;
 
     const handleCameraChange = () => {
       const pov = globeRef.current?.pointOfView();
@@ -239,20 +257,46 @@ const Map = memo(function Map({
         }
 
         let nextUiZoom = 1;
-        if (pov.altitude <= 0.3) nextUiZoom = 12;
-        else if (pov.altitude <= 0.6) nextUiZoom = 8;
-        else if (pov.altitude <= 1.2) nextUiZoom = 5;
-        else if (pov.altitude <= 2.0) nextUiZoom = 3;
-        else nextUiZoom = 2;
+        // Smooth piece-wise linear altitude -> zoom so the display never jumps.
+        // Control points (altitude, zoom): interpolated between each pair.
+        const ALT_ZOOM: [number, number][] = [
+          [4.0, 1.0], [3.5, 2.0], [2.5, 3.0],
+          [2.0, 4.0], [1.7, 5.0], [1.5, 5.8],
+          [1.2, 6.4], [1.0, 7.0], [0.7, 8.0],
+          [0.4, 9.0], [0.1, 10.0],
+        ];
+        const alt = pov.altitude;
+        if (alt >= ALT_ZOOM[0][0]) {
+          nextUiZoom = ALT_ZOOM[0][1];
+        } else if (alt <= ALT_ZOOM[ALT_ZOOM.length - 1][0]) {
+          nextUiZoom = ALT_ZOOM[ALT_ZOOM.length - 1][1];
+        } else {
+          for (let i = 0; i < ALT_ZOOM.length - 1; i++) {
+            const [a0, z0] = ALT_ZOOM[i];
+            const [a1, z1] = ALT_ZOOM[i + 1];
+            if (alt <= a0 && alt >= a1) {
+              const t = (a0 - alt) / (a0 - a1);
+              nextUiZoom = z0 + t * (z1 - z0);
+              break;
+            }
+          }
+        }
 
-        controls.autoRotate = nextUiZoom <= 2.5;
+        controls.autoRotate = nextUiZoom <= 5;
 
-        setMapCenter({ lat: pov.lat, lng: pov.lng });
+        // Throttle setMapCenter: only update when center moved > 0.5° to avoid
+        // creating a new object (and re-render) on every Three.js frame.
+        if (Math.abs(pov.lat - lastCenterLat) > 0.5 || Math.abs(pov.lng - lastCenterLng) > 0.5) {
+          setMapCenter({ lat: pov.lat, lng: pov.lng });
+          lastCenterLat = pov.lat;
+          lastCenterLng = pov.lng;
+        }
+        // setUiZoom: React skips re-render when value is unchanged (Object.is)
         setUiZoom(nextUiZoom);
 
-        const latChanged = Math.abs(pov.lat - lastLat) > 5;
-        const lngChanged = Math.abs(pov.lng - lastLng) > 5;
-        const zoomChanged = nextUiZoom !== lastUiZoom;
+        const latChanged = Math.abs(pov.lat - lastLat) > 2;
+        const lngChanged = Math.abs(pov.lng - lastLng) > 2;
+        const zoomChanged = Math.abs(nextUiZoom - lastUiZoom) > 0.1;
 
         if (latChanged || lngChanged || zoomChanged) {
           const span =
@@ -285,14 +329,50 @@ const Map = memo(function Map({
     return () => {
       controls.removeEventListener('change', handleCameraChange);
     };
-  }, [onBoundsChange, displayedIsDetailedMap, dimensions.width]);
+  }, [onBoundsChange, isDetailedMap, dimensions.width]);
 
-  const ringsData = useMemo(() => {
-    return [];
+  // Creates a DOM diamond-pin SVG element for each news item on the globe.
+  const makeGlobePin = useCallback((d: object) => {
+    const item = d as NewsItem;
+    const color = CATEGORY_COLORS[item.category] ?? '#aaaaaa';
+    const size = item.importance >= 4 ? 22 : 16;
+    const el = document.createElement('div');
+    el.style.cssText = `cursor:pointer;transform:translate(-50%,-100%);pointer-events:auto;filter:drop-shadow(0 2px 8px ${color}aa);transition:filter 0.25s ease,transform 0.25s ease;animation:pinFadeIn 0.4s ease-out`;
+    el.title = item.title;
+    el.innerHTML = makeLocationPinSvg(color, size);
+    el.addEventListener('mouseenter', () => {
+      el.style.filter = `drop-shadow(0 0 12px ${color}) drop-shadow(0 0 24px ${color}88)`;
+      el.style.transform = 'translate(-50%,-100%) scale(1.3)';
+    });
+    el.addEventListener('mouseleave', () => {
+      el.style.filter = `drop-shadow(0 2px 8px ${color}aa)`;
+      el.style.transform = 'translate(-50%,-100%) scale(1)';
+    });
+    el.addEventListener('click', (e) => { e.stopPropagation(); onMarkerClick(item); });
+    return el;
+  }, [onMarkerClick]);
+
+  const visibleNews = useMemo(() => {
+    if (effectiveZoom < 1 || effectiveZoom > 10) return [];
+    
+    return news.filter((item) => {
+      // At full globe, show everything importance >= 3 so pins are always present
+      if (effectiveZoom < 3) return item.importance >= 3;
+      if (effectiveZoom < 6) return item.importance >= 2;
+      return true;
+    });
+  }, [news, effectiveZoom]);
+
+  const visibleRoutes = useMemo(() => {
+    return interests.filter(
+      (item) => item.type === 'Travel Route' && Array.isArray(item.coords) && item.coords.length > 0
+    );
   }, [interests]);
 
+
+
   useEffect(() => {
-    if (!globeRef.current || dimensions.width === 0) return;
+    if (isDetailedMap || !globeRef.current || dimensions.width === 0) return;
 
     const scene = globeRef.current.scene();
     if (!scene) return;
@@ -391,89 +471,81 @@ const Map = memo(function Map({
         starAnimationIdRef.current = null;
       }
     };
-  }, [dimensions.width]);
+  }, [dimensions.width, isDetailedMap]);
 
-  const visibleNews = useMemo(() => {
-    return news.filter((item) => {
-      if (altitudeGroup === 3) return item.importance >= 4;
-      if (altitudeGroup === 2) return item.importance >= 2;
-      return true;
-    });
-  }, [news, altitudeGroup]);
-
-  const visibleRoutes = useMemo(() => {
-    return interests.filter(
-      (item) => item.type === 'Travel Route' && Array.isArray(item.coords) && item.coords.length > 0
-    );
-  }, [interests]);
+  // mapCenter is updated every 0.5deg of globe camera movement - more current
+  // than currentBounds (throttled to 2deg). Prioritising it prevents the Leaflet
+  // view from landing 1-2deg away from the globe's actual zoom target.
+  const effectiveCenter = mapCenter ?? currentBounds?.getCenter?.() ?? { lat: 0, lng: 0 };
 
   return (
-    <div className="h-full w-full relative">
-      <AnimatePresence initial={false}>
-        {displayedIsDetailedMap ? (
-          <motion.div
-            key="leaflet"
-            className="absolute inset-0 h-full w-full"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.35, ease: 'easeInOut' }}
-          >
-            <LeafletMap
-              center={mapCenter}
-              zoom={zoomFromApp >= 5 ? Math.max(5, Math.min(18, zoomFromApp)) : uiZoom + 2}
-              news={visibleNews}
-              onBoundsChange={onBoundsChange}
-              onMarkerClick={onMarkerClick}
-            />
-          </motion.div>
-        ) : (
-          <motion.div
-            key="globe"
-            className="absolute inset-0 h-full w-full bg-black cursor-grab active:cursor-grabbing"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.35, ease: 'easeInOut' }}
-          >
-            {dimensions.width > 0 && (
-              <Globe
-                ref={globeRef}
-                width={dimensions.width}
-                height={dimensions.height}
-                globeImageUrl="https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
-                bumpImageUrl="https://unpkg.com/three-globe/example/img/earth-topology.png"
-                backgroundImageUrl="https://unpkg.com/three-globe/example/img/night-sky.png"
-                globeTileEngineUrl={altitudeGroup !== 3 ? cartoDbUrl : undefined}
-                tilesTransitionDuration={1000}
-                pointsData={visibleNews}
-                pointLat="lat"
-                pointLng="lng"
-                pointColor={getPointColor}
-                pointAltitude={0.03}
-                pointRadius={getPointRadius}
-                pointsMerge={false}
-                onPointClick={(point) => onMarkerClick(point as NewsItem)}
-                htmlElementsData={[]}
-                ringsData={ringsData}
-                pathsData={visibleRoutes}
-                pathPoints={getPathPoints}
-                pathPointLat={(p: number[]) => p[0]}
-                pathPointLng={(p: number[]) => p[1]}
-                pathColor={getPathColor}
-                pathStroke={0.4}
-                pathDashLength={0.2}
-                pathDashGap={0.1}
-                pathDashAnimateTime={2000}
-              />
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+    <div className="relative h-full w-full bg-black">
+      
+      {/* 2D Leaflet Map Layer */}
+      <div 
+        className={`absolute inset-0 transition-opacity duration-500 z-[2] ${
+          isDetailedMap ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+        }`}
+        style={isDetailedMap ? { opacity: filterFading ? 0 : 1, transition: 'opacity 0.3s ease' } : undefined}
+      >
+        <LeafletMap
+          center={effectiveCenter}
+          zoom={Math.max(2, Math.min(18, effectiveZoom))}
+          news={visibleNews}
+          onBoundsChange={onBoundsChange}
+          onMarkerClick={onMarkerClick}
+        />
+      </div>
 
-      {cloudPhase !== null && (
-        <CloudTransitionOverlay phase={cloudPhase} />
-      )}
+      {/* 3D Globe Layer */}
+      <div 
+        className={`absolute inset-0 transition-opacity duration-500 z-[1] bg-black cursor-grab active:cursor-grabbing ${
+          showGlobe ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+        }`}
+      >
+        {dimensions.width > 0 && (
+          <Globe
+            ref={globeRef}
+            width={dimensions.width}
+            height={dimensions.height}
+            globeImageUrl="https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
+            bumpImageUrl="https://unpkg.com/three-globe/example/img/earth-topology.png"
+            backgroundImageUrl="https://unpkg.com/three-globe/example/img/night-sky.png"
+            globeTileEngineUrl={altitudeGroup !== 3 ? cartoDbUrl : undefined}
+            tilesTransitionDuration={1000}
+            htmlElementsData={isDetailedMap ? [] : visibleNews}
+            htmlElement={makeGlobePin}
+            htmlLat="lat"
+            htmlLng="lng"
+            htmlAltitude={0.02}
+            pathsData={visibleRoutes}
+            pathPoints={getPathPoints}
+            pathPointLat={(p: number[]) => p[0]}
+            pathPointLng={(p: number[]) => p[1]}
+            pathColor={getPathColor}
+            pathStroke={0.4}
+            pathDashLength={0.2}
+            pathDashGap={0.1}
+            pathDashAnimateTime={2000}
+          />
+        )}
+      </div>
+
+      {/* Glass status bar - shows view mode, zoom, and news count */}
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-[3] pointer-events-none">
+        <div className="flex items-center gap-3 rounded-full border border-white/[0.07] bg-black/35 backdrop-blur-2xl px-5 py-1.5 shadow-[0_0_30px_rgba(0,0,0,0.3)]">
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-cyan-400/40 animate-pulse" />
+            <span className="text-[9px] font-mono uppercase tracking-[0.25em] text-white/35">
+              {isDetailedMap ? 'DETAIL' : 'GLOBAL'} // Z{Math.round(effectiveZoom * 10) / 10}
+            </span>
+          </div>
+          <div className="w-px h-3 bg-white/10" />
+          <span className="text-[9px] font-mono uppercase tracking-[0.2em] text-white/30">
+            {visibleNews.length} Events
+          </span>
+        </div>
+      </div>
     </div>
   );
 });

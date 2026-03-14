@@ -52,6 +52,43 @@ function applyPersonalizedImpact(data: NewsItem[], interests: UserInterest[]): N
   });
 }
 
+export async function fetchAllNews(interests: UserInterest[] = []): Promise<NewsItem[]> {
+  try {
+    const response = await fetch('http://localhost:5001/api/news/all');
+    if (!response.ok) throw new Error('Backend request failed');
+    const data: NewsItem[] = await response.json();
+    return applyPersonalizedImpact(data, interests);
+  } catch (error) {
+    console.error('fetchAllNews error, using local fallback:', error);
+    try {
+      const res = await import('../data/historical_news.json');
+      const raw = (res.default || res) as Array<Record<string, unknown>>;
+      const results: NewsItem[] = raw.map((item) => {
+        const cat = item.category as string;
+        const norm = cat === 'Politics' || cat === 'World' ? 'Geopolitics' : cat;
+        return {
+          id: String(item.id),
+          title: String(item.title),
+          summary: String(item.summary),
+          soWhat: String(item.soWhat),
+          personalizedImpact: item.personalizedImpact != null ? String(item.personalizedImpact) : undefined,
+          source: String(item.source),
+          url: String(item.url),
+          category: norm as NewsCategory,
+          lat: Number(item.lat),
+          lng: Number(item.lng),
+          timestamp: String(item.timestamp),
+          importance: Number(item.importance ?? 3),
+          sentiment: (item.sentiment as NewsItem['sentiment']) || 'Neutral',
+        };
+      });
+      return applyPersonalizedImpact(results, interests);
+    } catch {
+      return [];
+    }
+  }
+}
+
 export async function fetchNews(
   category: NewsCategory,
   bounds: { north: number; south: number; east: number; west: number },
@@ -163,7 +200,7 @@ export async function deepResearch(newsItem: NewsItem): Promise<string> {
     return data.response;
   } catch (error) {
     console.error("Error during Deep Research:", error);
-    return "⚠️ **Local Intelligence Offline** \n\nEnsure Ollama is running locally and the `llama3.2:1b` model is available.";
+    return "[OFFLINE] **Local Intelligence Offline** \n\nEnsure Ollama is running locally and the `llama3.2:1b` model is available.";
   }
 }
 
@@ -205,6 +242,58 @@ export async function analyzeTrends(): Promise<TrendAnalysis[]> {
       confidence: 0.92
     }
   ];
+}
+
+// Sync/cache stubs - delegate to backend which owns all sync state
+export async function isSyncNeeded(): Promise<boolean> {
+  try {
+    const res = await fetch("http://localhost:5001/api/sync/needed");
+    if (!res.ok) return false;
+    const json = await res.json();
+    return json.needed ?? false;
+  } catch {
+    return false;
+  }
+}
+
+export async function syncLatestNews(): Promise<void> {
+  const res = await fetch("http://localhost:5001/api/sync", { method: "POST" });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Sync request failed");
+  }
+}
+
+export function markSyncDone(): void { /* no-op: backend tracks sync state */ }
+export function invalidateNewsCache(): void { /* no-op: backend is the single source of truth */ }
+
+/**
+ * Trigger a NewsAPI -> Supabase sync via the backend.
+ * Safe to call at any time; the backend enforces deduplication via upsert.
+ */
+export async function fetchAndStoreNews(): Promise<void> {
+  await syncLatestNews();
+}
+
+/**
+ * Fetch all stored news from Supabase (via backend).
+ * This is the fast "from cache" path - no NewsAPI hit.
+ */
+export async function fetchNewsFromSupabase(interests: UserInterest[] = []): Promise<NewsItem[]> {
+  return fetchAllNews(interests);
+}
+export async function getLocationLabel(lat: number, lng: number): Promise<string> {
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
+      { headers: { 'Accept-Language': 'en' } }
+    );
+    if (!res.ok) throw new Error('Nominatim error');
+    const data = await res.json();
+    return data.address?.city || data.address?.town || data.address?.state || data.address?.country || `${lat.toFixed(2)}, ${lng.toFixed(2)}`;
+  } catch {
+    return `${lat.toFixed(2)}, ${lng.toFixed(2)}`;
+  }
 }
 
 export async function analyzeImage(base64Image: string): Promise<string> {

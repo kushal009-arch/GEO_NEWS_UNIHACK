@@ -8,6 +8,40 @@
   --color-glass-border: rgba(0, 240, 255, 0.2);
 }
 
+/* ---- Location pin fade-in animation (used by globe + leaflet pins) ---- */
+@keyframes pinFadeIn {
+  from { opacity: 0; transform: translate(-50%, -115%) scale(0.6); }
+  to   { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+}
+
+/* ---- Location pin pulse for high-importance markers ---- */
+@keyframes pinPulse {
+  0%, 100% { filter: drop-shadow(0 2px 8px currentColor); }
+  50% { filter: drop-shadow(0 2px 16px currentColor) drop-shadow(0 0 8px currentColor); }
+}
+
+/* ---- Glassmorphism Leaflet popup ---- */
+.glass-popup .leaflet-popup-content-wrapper {
+  background: rgba(4, 8, 16, 0.82) !important;
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 14px !important;
+  color: white !important;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255,255,255,0.07) !important;
+  padding: 14px 16px !important;
+}
+.glass-popup .leaflet-popup-content {
+  margin: 0 !important;
+  font-family: "Inter", system-ui, sans-serif;
+}
+.glass-popup .leaflet-popup-tip-container {
+  display: none;
+}
+.glass-popup .leaflet-popup-close-button {
+  display: none;
+}
+
 html, body, #root {
   height: 100vh;
   width: 100vw;

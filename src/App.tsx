@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Map from './components/Map';
 import NavigationHub from './components/NavigationHub';
 import CommandAssistant from './components/CommandAssistant';
+import HeadlinesTicker from './components/HeadlinesTicker';
 import { NewsCategory, NewsItem, TrendAnalysis, UserInterest } from './types';
-import { fetchNewsFromSupabase, analyzeTrends, analyzeImage, deepResearch, syncLatestNews, isSyncNeeded, markSyncDone, invalidateNewsCache, getLocationLabel } from './services/newsService';
+import { fetchNews, fetchAllNews, analyzeTrends, analyzeImage, deepResearch, syncLatestNews, isSyncNeeded, markSyncDone, invalidateNewsCache, getLocationLabel } from './services/newsService';
 import { getCountryCoordinates } from './services/countryCoordinates';
 import { Loader2, X, AlertCircle, Globe, Zap, MapPin } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -19,7 +20,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [bounds, setBounds] = useState<any>(null);
-  const [zoom, setZoom] = useState(4); // Emergency Recovery: Initial Zoom 4
+  const [zoom, setZoom] = useState(3); // Start zoomed to see Asia-Pacific
   const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
 
   const [imageAnalysis, setImageAnalysis] = useState<string | null>(null);
@@ -80,6 +81,12 @@ export default function App() {
     loadTrends();
   }, []);
 
+  // On mount: load all news globally so the globe is populated with all categories
+  useEffect(() => {
+    fetchAllNews(interests).then((data) => setNews(data)).catch(console.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const loadNews = useCallback(async () => {
     if (applyCounter === 0) return;
 
@@ -93,8 +100,8 @@ export default function App() {
 
     setIsLoading(true);
     try {
-      const data = await fetchNewsFromSupabase(
-        activeCategory,
+      const data = await fetchNews(
+        'Just In', // fetch all categories; client filters by activeCategory
         {
           north: effectiveBounds.getNorth(),
           south: effectiveBounds.getSouth(),
@@ -109,7 +116,35 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [activeCategory, bounds, zoom, daysAgo, interests, applyCounter]);
+  }, [bounds, zoom, daysAgo, interests, applyCounter]);
+
+  // Client-side category + bounds filter - instant, no re-fetch
+  // When zoomed in, only show news within the visible map area
+  const displayedNews = useMemo(() => {
+    let filtered = news;
+    if (activeCategory !== 'Just In' && activeCategory !== 'For You') {
+      filtered = filtered.filter((item) => item.category === activeCategory);
+    }
+    // Apply bounds filter when zoomed in (zoom >= 3) for regional focus
+    if (bounds && zoom >= 3) {
+      try {
+        const north = bounds.getNorth();
+        const south = bounds.getSouth();
+        const east = bounds.getEast();
+        const west = bounds.getWest();
+        if (Number.isFinite(north) && Number.isFinite(south)) {
+          // Add padding so markers near edges still appear
+          const latPad = (north - south) * 0.15;
+          const lngPad = (east - west) * 0.15;
+          filtered = filtered.filter((item) =>
+            item.lat >= south - latPad && item.lat <= north + latPad &&
+            item.lng >= west - lngPad && item.lng <= east + lngPad
+          );
+        }
+      } catch { /* bounds proxy may not be ready yet */ }
+    }
+    return filtered;
+  }, [news, activeCategory, bounds, zoom]);
 
   // One-time startup: sync NewsAPI to Supabase only when the server-side 30-min
   // window has elapsed. Shared across ALL users - if another user synced recently,
@@ -239,6 +274,40 @@ export default function App() {
     setCenterOn(null);
   }, []);
 
+  // Derive a region label from the current map center when zoomed in
+  const regionLabel = useMemo(() => {
+    if (!bounds || zoom < 3) return null;
+    const center = bounds.getCenter?.();
+    if (!center) return null;
+    const { lat, lng } = center;
+    // Asia-Pacific subregions
+    if (lat > 20 && lat < 45 && lng > 100 && lng < 145) return 'East Asia';
+    if (lat > -10 && lat < 20 && lng > 95 && lng < 140) return 'Southeast Asia';
+    if (lat > 5 && lat < 40 && lng > 65 && lng < 100) return 'South Asia';
+    if (lat < -10 && lat > -45 && lng > 110 && lng < 160) return 'Australia';
+    if (lat < -30 && lng > 165 && lng < 180) return 'New Zealand';
+    // Americas
+    if (lat > 25 && lat < 50 && lng > -130 && lng < -60) return 'North America';
+    if (lat > -5 && lat < 25 && lng > -120 && lng < -60) return 'Central America';
+    if (lat < -5 && lat > -55 && lng > -80 && lng < -35) return 'South America';
+    // Europe
+    if (lat > 45 && lat < 72 && lng > -15 && lng < 30) return 'Northern Europe';
+    if (lat > 35 && lat < 48 && lng > -15 && lng < 30) return 'Southern Europe';
+    if (lat > 45 && lat < 60 && lng > 30 && lng < 60) return 'Eastern Europe';
+    if (lat > 35 && lat < 72 && lng > -15 && lng < 40) return 'Europe';
+    // Middle East & Africa
+    if (lat > 10 && lat < 40 && lng > 25 && lng < 65) return 'Middle East';
+    if (lat < 10 && lat > -35 && lng > -20 && lng < 55) return 'Africa';
+    if (lat > 40 && lat < 60 && lng > 60 && lng < 150) return 'Central Asia';
+    return null;
+  }, [bounds, zoom]);
+
+  // When a headline is clicked, fly to it and open the detail panel
+  const handleHeadlineClick = useCallback((item: NewsItem) => {
+    setCenterOn({ lat: item.lat, lng: item.lng });
+    handleMarkerClick(item);
+  }, [handleMarkerClick]);
+
   return (
     <div className={`relative h-full w-full bg-black font-sans text-white overflow-hidden ${isGlitching ? 'glitch-shake' : ''}`}>
       <NavigationHub
@@ -266,7 +335,7 @@ export default function App() {
 
       <main className="absolute inset-0 z-[1]">
         <Map
-          news={news}
+          news={displayedNews}
           interests={interests}
           zoom={zoom}
           currentBounds={bounds}
@@ -460,10 +529,24 @@ export default function App() {
             exit={{ opacity: 0, scale: 0.85, y: 8 }}
             transition={{ duration: 0.18 }}
           >
-            <CommandAssistant onCenterOnCountry={handleCenterOnCountry} />
+            <CommandAssistant
+              onCenterOnCountry={handleCenterOnCountry}
+              onNavigateTo={(coords) => setCenterOn(coords)}
+            />
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Floating headlines ticker - shows top 5 news from ALL categories, updates by region on zoom */}
+      {!selectedNews && (
+        <HeadlinesTicker
+          news={news}
+          regionLabel={regionLabel}
+          onHeadlineClick={handleHeadlineClick}
+          bounds={bounds}
+          zoom={zoom}
+        />
+      )}
 
       <div className="scanline-overlay fixed inset-0 z-[10000] pointer-events-none" />
     </div>

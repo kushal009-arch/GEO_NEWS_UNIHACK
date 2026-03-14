@@ -1,13 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { MessageCircle, X, Minus, Send } from 'lucide-react';
 import {
   getCountryFromPhrase,
   stripGotoTag,
   extractGotoCountry
 } from '../services/countryCoordinates';
-import { askAssistant } from '../services/aiService';
-import { supabase } from '../lib/supabaseClient';
-import { NewsItem } from '../types';
+
+const BACKEND = 'http://localhost:5001';
+
+const SYSTEM_PROMPT = `You are an AI assistant for GeoNews, an intelligence-grade geopolitical news dashboard.
+
+IMPORTANT RULE: If the user wants to navigate to, zoom to, fly to, or see a specific place, country, city, or region, you MUST respond with ONLY a JSON object - no prose, no markdown:
+{"action":"flyTo","lat":<number>,"lng":<number>,"zoom":5,"locationName":"<name>","message":"<friendly 1-line reply>"}
+
+For all other questions answer in 2-4 sentences. You know about:
+- GeoNews features: 3D globe, Leaflet 2D map at zoom>6, category filters (Geopolitics/Climate/Economy/Technology), news markers, Strategic Dashboard, 48-hour AI forecasts
+- The map shows live news events as glowing markers colour-coded by category
+- Users can click markers for details, use the sidebar to filter, and the Strategic Dashboard for risk forecasts`;
 
 type ChatMessage = {
   id: number;
@@ -17,6 +26,7 @@ type ChatMessage = {
 
 export interface CommandAssistantProps {
   onCenterOnCountry?: (countryName: string) => void;
+  onNavigateTo?: (coords: { lat: number; lng: number; zoom?: number }) => void;
 }
 
 const capitalizeCountry = (name: string): string =>
@@ -59,26 +69,86 @@ const FAQ: { keywords: string[]; answer: string }[] = [
   {
     keywords: ['news', 'details', 'article'],
     answer:
-      'Click any news marker ring on the map to open the Target Lock panel on the right with the TL;DR, causality chains, and a link to the source article.',
+      'Click any news marker on the map to open the Target Lock panel on the right with the TL;DR, causality chains, and a link to the source article.',
   },
 ];
 
-const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry }) => {
+async function askGroq(
+  userMessage: string
+): Promise<{ text: string; coords?: { lat: number; lng: number; zoom?: number }; gotoCountry?: string }> {
+  try {
+    const res = await fetch(`${BACKEND}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: userMessage },
+        ],
+      }),
+    });
+
+    if (!res.ok) throw new Error(`Backend chat error ${res.status}`);
+    const data = await res.json();
+    const content: string = data.content || '';
+
+    // Try to parse as a flyTo command
+    try {
+      const trimmed = content.trim();
+      const jsonStart = trimmed.indexOf('{');
+      const jsonEnd = trimmed.lastIndexOf('}');
+      if (jsonStart !== -1 && jsonEnd !== -1) {
+        const parsed = JSON.parse(trimmed.slice(jsonStart, jsonEnd + 1));
+        if (parsed.action === 'flyTo' && typeof parsed.lat === 'number') {
+          return {
+            text: parsed.message || `Navigating to ${parsed.locationName}.`,
+            coords: { lat: parsed.lat, lng: parsed.lng, zoom: parsed.zoom },
+          };
+        }
+      }
+    } catch {
+      // Not JSON - normal text response
+    }
+
+    return { text: content };
+  } catch {
+    // Fallback to local FAQ
+    const lower = userMessage.toLowerCase();
+    const countryCanonical = getCountryFromPhrase(userMessage);
+    if (countryCanonical) {
+      const displayName = capitalizeCountry(countryCanonical);
+      return { text: `Taking you to ${displayName}.`, gotoCountry: countryCanonical };
+    }
+    const match = FAQ.find((item) => item.keywords.some((kw) => lower.includes(kw)));
+    return {
+      text: match
+        ? match.answer
+        : 'GeoNews AI is temporarily offline. Try asking about zoom, layers, or say \'Take me to Taiwan\'.',
+    };
+  }
+}
+
+const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, onNavigateTo }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 0,
       from: 'assistant',
-      text: 'Command Assistant online. Ask about controls, layers, or try "Take me to India".',
+      text: 'Command Assistant online. Ask about controls, layers, or try "Take me to Taiwan".',
     },
   ]);
   const [input, setInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isThinking]);
 
   const handleSend = async () => {
     const trimmed = input.trim();
-    if (!trimmed) return;
+    if (!trimmed || isThinking) return;
 
     const nextId = messages.length ? messages[messages.length - 1].id + 1 : 1;
     const userMessage: ChatMessage = { id: nextId, from: 'user', text: trimmed };
@@ -86,80 +156,21 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry }
     setInput('');
     setIsThinking(true);
 
-    const lower = trimmed.toLowerCase();
-    const countryCanonical = getCountryFromPhrase(trimmed);
+    const result = await askGroq(trimmed);
 
-    try {
-      if (countryCanonical) {
-        const displayName = capitalizeCountry(countryCanonical);
-        const rawReply = `Taking you to ${displayName}. ##GOTO:${countryCanonical}`;
-        const countryFromTag = extractGotoCountry(rawReply);
-        const displayText = stripGotoTag(rawReply);
-
-        if (countryFromTag && onCenterOnCountry) {
-          onCenterOnCountry(countryFromTag);
-        }
-
-        const reply: ChatMessage = {
-          id: nextId + 1,
-          from: 'assistant',
-          text: displayText,
-        };
-        setMessages((prev) => [...prev, reply]);
-        setIsThinking(false);
-        return;
-      }
-
-      // Check FAQ first
-      const match = FAQ.find((item) => item.keywords.some((kw) => lower.includes(kw)));
-      if (match) {
-        const reply: ChatMessage = {
-          id: nextId + 1,
-          from: 'assistant',
-          text: match.answer,
-        };
-        setMessages((prev) => [...prev, reply]);
-        setIsThinking(false);
-        return;
-      }
-
-      // Fetch news for context
-      const { data: newsData } = await supabase
-        .from("news_events")
-        .select("*")
-        .limit(10);
-      
-      const newsContext = (newsData || []).map((n: any) => ({
-        title: n.title,
-        category: n.category,
-        sentiment: n.sentiment
-      }));
-
-      // Call Groq AI Assistant
-      const aiResponse = await askAssistant(trimmed, {
-        timestamp: new Date().toISOString(),
-        location: countryCanonical || "Global",
-        mission: "What's next - analyze big-picture strategic impact",
-        newsEvents: newsContext
-      });
-
-      const reply: ChatMessage = {
-        id: nextId + 1,
-        from: 'assistant',
-        text: aiResponse,
-      };
-      setMessages((prev) => [...prev, reply]);
-    } catch (error) {
-      console.error("Assistant Error:", error);
-      const errorReply: ChatMessage = {
-        id: nextId + 1,
-        from: 'assistant',
-        text: "I'm having trouble connecting to the intelligence core. Please try again later.",
-      };
-      setMessages((prev) => [...prev, errorReply]);
-    } finally {
-      setIsThinking(false);
+    // Handle navigation
+    if (result.coords && onNavigateTo) {
+      onNavigateTo(result.coords);
+    } else if (result.gotoCountry) {
+      // Legacy country-name path
+      const rawReply = `##GOTO:${result.gotoCountry}`;
+      const countryFromTag = extractGotoCountry(rawReply);
+      if (countryFromTag && onCenterOnCountry) onCenterOnCountry(countryFromTag);
     }
+
+    const reply: ChatMessage = { id: nextId + 1, from: 'assistant', text: result.text };
+    setMessages((prev) => [...prev, reply]);
+    setIsThinking(false);
   };
 
   const handleQuickAction = (prompt: string) => {
@@ -241,6 +252,7 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry }
                   AI is typing...
                 </div>
               )}
+              <div ref={messagesEndRef} />
             </div>
 
             {/* Quick actions & input */}
