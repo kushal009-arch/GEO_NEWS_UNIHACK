@@ -11,7 +11,8 @@ export default function App() {
 
   return (
     <Layout>
-      <div className="h-full w-full">
+      {/* Full viewport so Globe canvas (window dimensions) matches container; navbar overlays on top like GEONEWS */}
+      <div className="absolute inset-0 w-full h-full">
         <Map
           news={news}
           interests={interests}
