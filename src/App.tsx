@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import Map from './components/Map';
 import NavigationHub from './components/NavigationHub';
-// import CommandAssistant from './components/CommandAssistant';
+import CommandAssistant from './components/CommandAssistant';
 import { NewsCategory, NewsItem, TrendAnalysis, UserInterest } from './types';
 import { fetchNews, analyzeTrends, analyzeImage, deepResearch } from './services/newsService';
+import { getCountryCoordinates } from './services/countryCoordinates';
 import { Loader2, X, AlertCircle, Globe, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
@@ -32,6 +33,7 @@ export default function App() {
   const [showSentiment, setShowSentiment] = useState(false);
   const [daysAgo, setDaysAgo] = useState(0);
   const [applyCounter, setApplyCounter] = useState(0);
+  const [centerOn, setCenterOn] = useState<{ lat: number; lng: number } | null>(null);
 
   const [interests, setInterests] = useState<UserInterest[]>([
     {
@@ -184,6 +186,15 @@ export default function App() {
     );
   }, []);
 
+  const handleCenterOnCountry = useCallback((countryName: string) => {
+    const coords = getCountryCoordinates(countryName);
+    if (coords) setCenterOn({ lat: coords.lat, lng: coords.lng });
+  }, []);
+
+  const handleCenterComplete = useCallback(() => {
+    setCenterOn(null);
+  }, []);
+
   console.log('APP NEWS:', news);
 
   return (
@@ -210,6 +221,8 @@ export default function App() {
           onMarkerClick={handleMarkerClick}
           showHeatmap={showHeatmap}
           showSentiment={showSentiment}
+          centerOn={centerOn}
+          onCenterComplete={handleCenterComplete}
         />
       </main>
 
@@ -380,8 +393,7 @@ export default function App() {
         {zoom > 10 ? 'Local View' : zoom > 5 ? 'Regional View' : 'Global View'} (Zoom: {zoom})
       </div>
 
-      {/* CommandAssistant – uncomment when src/components/CommandAssistant.tsx exists */}
-      {/* <CommandAssistant /> */}
+      <CommandAssistant onCenterOnCountry={handleCenterOnCountry} />
 
       <div className="scanline-overlay fixed inset-0 z-[500]" />
     </div>

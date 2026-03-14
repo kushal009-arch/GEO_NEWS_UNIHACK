@@ -11,6 +11,10 @@ interface MapProps {
   onMarkerClick: (item: NewsItem) => void;
   showHeatmap: boolean;
   showSentiment: boolean;
+  /** When set, globe flies to this point (e.g. from Command Assistant "Take me to X"). */
+  centerOn?: { lat: number; lng: number } | null;
+  /** Called after centering so App can clear centerOn. */
+  onCenterComplete?: () => void;
 }
 
 const cartoDbUrl = (x: number, y: number, l: number) =>
@@ -55,7 +59,9 @@ const Map = memo(function Map({
   onBoundsChange,
   onMarkerClick,
   showHeatmap,
-  showSentiment
+  showSentiment,
+  centerOn = null,
+  onCenterComplete
 }: MapProps) {
   const globeRef = useRef<any>(null);
   const starsRef = useRef<THREE.Points | null>(null);
@@ -65,6 +71,33 @@ const Map = memo(function Map({
   const [altitudeGroup, setAltitudeGroup] = useState(3);
   const [uiZoom, setUiZoom] = useState(3);
   const [mapCenter, setMapCenter] = useState<{ lat: number; lng: number } | null>(null);
+
+  useEffect(() => {
+    if (!centerOn) return;
+    const { lat, lng } = centerOn;
+    const span = 25;
+    const syntheticBounds = {
+      getNorth: () => lat + span / 2,
+      getSouth: () => lat - span / 2,
+      getEast: () => lng + span / 2,
+      getWest: () => lng - span / 2,
+      getCenter: () => ({ lat, lng })
+    };
+    if (uiZoom >= 7) {
+      setMapCenter(centerOn);
+      onBoundsChange(syntheticBounds, 5);
+      onCenterComplete?.();
+      return;
+    }
+    globeRef.current?.pointOfView({ lat, lng, altitude: 1.2 }, 1000);
+    const t = setTimeout(() => {
+      setMapCenter(centerOn);
+      setUiZoom(5);
+      onBoundsChange(syntheticBounds, 5);
+      onCenterComplete?.();
+    }, 1100);
+    return () => clearTimeout(t);
+  }, [centerOn, onCenterComplete, onBoundsChange]);
 
   useEffect(() => {
     const handleResize = () => {

@@ -4,6 +4,54 @@ import { NewsCategory, NewsItem, TrendAnalysis, UserInterest } from "../types";
 // Temporarily keep AI disabled while debugging map + backend flow
 const ai = null;
 
+// Backend-style filtering (mirrors backend/server.js) for local fallback
+function distanceDegrees(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const dLat = lat1 - lat2;
+  const dLng = lng1 - lng2;
+  return Math.sqrt(dLat * dLat + dLng * dLng);
+}
+
+function radiusByZoom(zoom: number): number {
+  if (zoom >= 10) return 5;
+  if (zoom >= 7) return 10;
+  if (zoom >= 5) return 18;
+  if (zoom >= 3) return 40;
+  return 180;
+}
+
+function applyPersonalizedImpact(data: NewsItem[], interests: UserInterest[]): NewsItem[] {
+  return data.map((news) => {
+    let impact = news.personalizedImpact || null;
+
+    if (!impact && interests.length > 0) {
+      for (const interest of interests) {
+        const dLat = news.lat - interest.lat;
+        const dLng = news.lng - interest.lng;
+        const distanceSq = dLat * dLat + dLng * dLng;
+
+        let nearRoute = false;
+        if (interest.type === "Travel Route" && interest.coords) {
+          nearRoute = interest.coords.some((coord) => {
+            const rLat = coord[0] - news.lat;
+            const rLng = coord[1] - news.lng;
+            return rLat * rLat + rLng * rLng < 100;
+          });
+        }
+
+        if (distanceSq < 100 || nearRoute) {
+          impact = `Proximity Alert: This event occurs along or near your designated ${interest.type} ("${interest.name}"). Expect potential operational disruptions or localized volatility.`;
+          break;
+        }
+      }
+    }
+
+    return {
+      ...news,
+      personalizedImpact: impact || undefined
+    };
+  });
+}
+
 export async function fetchNews(
   category: NewsCategory,
   bounds: { north: number; south: number; east: number; west: number },
@@ -31,41 +79,50 @@ export async function fetchNews(
     let data: NewsItem[] = await response.json();
     console.log("BACKEND NEWS:", data);
 
-    const newsWithImpact = data.map((news) => {
-      let impact = news.personalizedImpact || null;
-
-      if (!impact && interests.length > 0) {
-        for (const interest of interests) {
-          const dLat = news.lat - interest.lat;
-          const dLng = news.lng - interest.lng;
-          const distanceSq = dLat * dLat + dLng * dLng;
-
-          let nearRoute = false;
-          if (interest.type === "Travel Route" && interest.coords) {
-            nearRoute = interest.coords.some((coord) => {
-              const rLat = coord[0] - news.lat;
-              const rLng = coord[1] - news.lng;
-              return rLat * rLat + rLng * rLng < 100;
-            });
-          }
-
-          if (distanceSq < 100 || nearRoute) {
-            impact = `Proximity Alert: This event occurs along or near your designated ${interest.type} ("${interest.name}"). Expect potential operational disruptions or localized volatility.`;
-            break;
-          }
-        }
-      }
-
-      return {
-        ...news,
-        personalizedImpact: impact || undefined
-      };
-    });
-
-    return newsWithImpact;
+    return applyPersonalizedImpact(data, interests);
   } catch (error) {
     console.error("Error fetching backend news:", error);
-    return [];
+    // Fallback: local data with same filtering logic as backend/server.js
+    try {
+      const res = await import("../data/historical_news.json");
+      let raw = (res.default || res) as Array<Record<string, unknown>>;
+      let results: NewsItem[] = raw.map((item) => {
+        const cat = item.category as string;
+        const norm = cat === "Politics" || cat === "World" ? "Geopolitics" : cat;
+        return {
+          id: String(item.id),
+          title: String(item.title),
+          summary: String(item.summary),
+          soWhat: String(item.soWhat),
+          personalizedImpact: item.personalizedImpact != null ? String(item.personalizedImpact) : undefined,
+          source: String(item.source),
+          url: String(item.url),
+          category: norm as NewsCategory,
+          lat: Number(item.lat),
+          lng: Number(item.lng),
+          timestamp: String(item.timestamp),
+          importance: Number(item.importance ?? 3),
+          sentiment: (item.sentiment as NewsItem["sentiment"]) || "Neutral"
+        };
+      });
+
+      if (category && category !== "Just In" && category !== "For You") {
+        results = results.filter((item) => item.category === category);
+      }
+
+      const radius = radiusByZoom(zoom);
+      if (Number.isFinite(centerLat) && Number.isFinite(centerLng)) {
+        results = results.filter((item) => {
+          const distance = distanceDegrees(item.lat, item.lng, centerLat, centerLng);
+          return distance <= radius;
+        });
+      }
+
+      return applyPersonalizedImpact(results, interests);
+    } catch (fallbackError) {
+      console.error("Fallback news load failed:", fallbackError);
+      return [];
+    }
   }
 }
 
@@ -92,7 +149,7 @@ export async function deepResearch(newsItem: NewsItem): Promise<string> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "llama3",
+        model: "llama3.2:1b",
         prompt,
         stream: false
       })
@@ -106,7 +163,7 @@ export async function deepResearch(newsItem: NewsItem): Promise<string> {
     return data.response;
   } catch (error) {
     console.error("Error during Deep Research:", error);
-    return "⚠️ **Local Intelligence Offline** \n\nEnsure Ollama is running locally and the `llama3` model is available.";
+    return "⚠️ **Local Intelligence Offline** \n\nEnsure Ollama is running locally and the `llama3.2:1b` model is available.";
   }
 }
 
