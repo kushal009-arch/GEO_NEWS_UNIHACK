@@ -29,9 +29,9 @@ const cartoDbUrl = (x: number, y: number, l: number) =>
 // Intelligence dashboard palette per category
 const CATEGORY_COLORS: Record<string, string> = {
   Geopolitics: '#ff4d4d',
-  Business:    '#f1c40f',
-  Technology:  '#00d4ff',
-  Climate:     '#2ecc71',
+  Business: '#f1c40f',
+  Technology: '#00d4ff',
+  Climate: '#2ecc71',
 };
 
 // Location pin SVG marker
@@ -42,13 +42,13 @@ function makeLocationPinSvg(color: string, size: number): string {
   const innerR = Math.round(r * 0.45);
   return `<svg width="${size}" height="${h}" viewBox="0 0 ${size} ${h}" fill="none" xmlns="http://www.w3.org/2000/svg">
     <defs>
-      <radialGradient id="glow_${color.replace('#','')}" cx="50%" cy="40%" r="60%">
+      <radialGradient id="glow_${color.replace('#', '')}" cx="50%" cy="40%" r="60%">
         <stop offset="0%" stop-color="${color}" stop-opacity="0.9"/>
         <stop offset="100%" stop-color="${color}" stop-opacity="0.6"/>
       </radialGradient>
     </defs>
     <path d="M${cx} ${h - 2} C${cx} ${h - 2} ${size - 2} ${r + 4} ${size - 2} ${r + 2} C${size - 2} ${2} ${2} ${2} ${2} ${r + 2} C${2} ${r + 4} ${cx} ${h - 2} ${cx} ${h - 2}Z"
-      fill="url(#glow_${color.replace('#','')})"/>
+      fill="url(#glow_${color.replace('#', '')})"/>
     <path d="M${cx} ${h - 2} C${cx} ${h - 2} ${size - 2} ${r + 4} ${size - 2} ${r + 2} C${size - 2} ${2} ${2} ${2} ${2} ${r + 2} C${2} ${r + 4} ${cx} ${h - 2} ${cx} ${h - 2}Z"
       fill="none" stroke="white" stroke-opacity="0.3" stroke-width="0.5"/>
     <circle cx="${cx}" cy="${r + 2}" r="${innerR}" fill="white" fill-opacity="0.9"/>
@@ -354,7 +354,7 @@ const Map = memo(function Map({
 
   const visibleNews = useMemo(() => {
     if (effectiveZoom < 1 || effectiveZoom > 10) return [];
-    
+
     return news.filter((item) => {
       // At full globe, show everything importance >= 3 so pins are always present
       if (effectiveZoom < 3) return item.importance >= 3;
@@ -480,12 +480,11 @@ const Map = memo(function Map({
 
   return (
     <div className="relative h-full w-full bg-black">
-      
+
       {/* 2D Leaflet Map Layer */}
-      <div 
-        className={`absolute inset-0 transition-opacity duration-500 z-[2] ${
-          isDetailedMap ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-        }`}
+      <div
+        className={`absolute inset-0 transition-opacity duration-500 z-[2] ${isDetailedMap ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+          }`}
         style={isDetailedMap ? { opacity: filterFading ? 0 : 1, transition: 'opacity 0.3s ease' } : undefined}
       >
         <LeafletMap
@@ -498,10 +497,9 @@ const Map = memo(function Map({
       </div>
 
       {/* 3D Globe Layer */}
-      <div 
-        className={`absolute inset-0 transition-opacity duration-500 z-[1] bg-black cursor-grab active:cursor-grabbing ${
-          showGlobe ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-        }`}
+      <div
+        className={`absolute inset-0 transition-opacity duration-500 z-[1] bg-black cursor-grab active:cursor-grabbing ${showGlobe ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+          }`}
       >
         {dimensions.width > 0 && (
           <Globe
