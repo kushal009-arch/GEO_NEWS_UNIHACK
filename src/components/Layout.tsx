@@ -17,7 +17,7 @@ export default function Layout({ children, glitch = false }: LayoutProps) {
     >
       <Navbar />
       <Sidebar />
-      <main className="fixed inset-0 pt-14 overflow-auto">
+      <main className="fixed inset-0 z-[1] pt-14 overflow-hidden">
         {children}
       </main>
       <div className="scanline-overlay fixed inset-0 z-[500]" aria-hidden />
