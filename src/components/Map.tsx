@@ -124,6 +124,19 @@ const Map = memo(function Map({
   }, []);
 
   useEffect(() => {
+    if (prevDetailedRef.current && !isDetailedMap && currentBounds) {
+      const center = currentBounds.getCenter();
+      setMapCenter({ lat: center.lat, lng: center.lng });
+      setUiZoom(4);
+      onBoundsChange(currentBounds, 4);
+      if (globeRef.current) {
+        globeRef.current.pointOfView({ lat: center.lat, lng: center.lng, altitude: 1.5 }, 0);
+      }
+    }
+    prevDetailedRef.current = isDetailedMap;
+  }, [isDetailedMap, onBoundsChange, currentBounds]);
+
+  useEffect(() => {
     if (isDetailedMap || dimensions.width === 0) return;
     if (!globeRef.current) return;
 
@@ -230,19 +243,6 @@ const Map = memo(function Map({
       controls.removeEventListener('change', handleCameraChange);
     };
   }, [onBoundsChange, isDetailedMap, dimensions.width]);
-
-  useEffect(() => {
-    if (prevDetailedRef.current && !isDetailedMap && currentBounds) {
-      const center = currentBounds.getCenter();
-      setMapCenter({ lat: center.lat, lng: center.lng });
-      setUiZoom(4);
-      onBoundsChange(currentBounds, 4);
-      if (globeRef.current) {
-        globeRef.current.pointOfView({ lat: center.lat, lng: center.lng, altitude: 1.5 }, 0);
-      }
-    }
-    prevDetailedRef.current = isDetailedMap;
-  }, [isDetailedMap, onBoundsChange, currentBounds]);
 
   const ringsData = useMemo(() => {
     return [];

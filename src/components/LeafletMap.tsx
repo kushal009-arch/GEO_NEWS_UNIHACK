@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, CircleMarker, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { NewsItem } from '../types';
@@ -14,8 +14,17 @@ interface LeafletMapProps {
 /** Report bounds and zoom in same scale as globe (2–12) so parent state is consistent. */
 function BoundsReporter({ onBoundsChange }: { onBoundsChange: (bounds: any, zoom: number) => void }) {
   const map = useMap();
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const report = () => {
+    if (!isMountedRef.current) return;
     const b = map.getBounds();
     const boundsProxy = {
       getNorth: () => b.getNorth(),

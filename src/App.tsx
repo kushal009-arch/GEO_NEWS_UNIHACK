@@ -111,7 +111,7 @@ export default function App() {
 
   const handleBoundsChange = useCallback((newBounds: any, newZoom: number) => {
     setBounds(newBounds);
-    setZoom(newZoom);
+    setZoom((prevZoom) => (prevZoom === newZoom ? prevZoom : newZoom));
   }, []);
 
   const handleAnalyzeImage = async (file: File) => {
