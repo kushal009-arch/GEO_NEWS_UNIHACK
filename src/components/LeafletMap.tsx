@@ -1,6 +1,5 @@
 import { useEffect } from 'react';
 import { MapContainer, TileLayer, CircleMarker, useMapEvents } from 'react-leaflet';
-import type { LatLngBoundsExpression } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { NewsItem } from '../types';
 
@@ -48,7 +47,7 @@ export default function LeafletMap({ center, zoom, news, onBoundsChange, onMarke
 
   return (
     <MapContainer
-      center={effectiveCenter as LatLngBoundsExpression}
+      center={[effectiveCenter.lat, effectiveCenter.lng]}
       zoom={effectiveZoom}
       minZoom={2}
       maxZoom={18}

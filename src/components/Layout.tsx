@@ -1,23 +1,19 @@
 import { type ReactNode } from 'react';
-import Navbar from './Navbar';
-import Sidebar from './Sidebar';
 
 interface LayoutProps {
   children: ReactNode;
-  /** Optional: apply glitch-shake to the main container (e.g. on marker click). */
   glitch?: boolean;
 }
 
 export default function Layout({ children, glitch = false }: LayoutProps) {
   return (
     <div
-      className={`relative h-full w-full bg-black font-sans text-white overflow-hidden ${
+      className={`relative w-full bg-black font-sans text-white overflow-hidden ${
         glitch ? 'glitch-shake' : ''
       }`}
+      style={{ height: '100vh', minHeight: '100vh' }}
     >
-      <Navbar />
-      <Sidebar />
-      <main className="absolute inset-0 z-[1] overflow-hidden">
+      <main className="absolute inset-0 z-[1] overflow-hidden" style={{ height: '100%' }}>
         {children}
       </main>
       <div className="scanline-overlay fixed inset-0 z-[500]" aria-hidden />

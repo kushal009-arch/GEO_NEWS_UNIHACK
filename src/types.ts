@@ -1,10 +1,10 @@
 export type NewsCategory =
-  | 'Just In'
-  | 'For You'
-  | 'Geopolitics'
-  | 'Business'
-  | 'Technology'
-  | 'Climate';
+  | "Just In"
+  | "For You"
+  | "Geopolitics"
+  | "Business"
+  | "Technology"
+  | "Climate";
 
 export interface NewsItem {
   id: string;
@@ -19,13 +19,20 @@ export interface NewsItem {
   lng: number;
   timestamp: string;
   importance: number; // 1-5
-  sentiment: 'Positive' | 'Neutral' | 'Negative' | 'Anxious' | 'Panic' | 'Celebratory';
+  sentiment: "Positive" | "Neutral" | "Negative" | "Anxious" | "Panic" | "Celebratory";
+}
+
+export interface TrendAnalysis {
+  trend: string;
+  prediction: string;
+  impact: string;
+  confidence: number;
 }
 
 export interface UserInterest {
   id: string;
   name: string;
-  type: 'Supply Chain' | 'Investment' | 'Travel Route' | 'Energy' | 'Shipping';
+  type: "Supply Chain" | "Investment" | "Travel Route" | "Energy" | "Shipping";
   lat: number;
   lng: number;
   radius: number;

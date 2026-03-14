@@ -82,7 +82,7 @@ export default function Sidebar({
         </div>
         {isOpen && (
           <h1 className="text-lg font-semibold uppercase tracking-[0.1em] text-[var(--color-neon-blue)] font-sans">
-            GeoNews AI
+            Globe News
           </h1>
         )}
       </div>

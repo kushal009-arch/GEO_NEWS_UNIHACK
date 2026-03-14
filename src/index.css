@@ -8,19 +8,17 @@
   --color-glass-border: rgba(0, 240, 255, 0.2);
 }
 
-html,
-body,
-#root {
+html, body, #root {
   height: 100%;
   width: 100%;
   margin: 0;
   padding: 0;
-  overflow: hidden;
-  background-color: #000;
+  overflow: hidden; /* Hide all scrollbars */
+  background-color: #000; /* Deep Black */
   color: #fff;
 }
 
-/* Custom Scrollbar for inner elements */
+/* Custom Scrollbar for inner elements if needed, but keeping it minimal */
 ::-webkit-scrollbar {
   width: 4px;
 }
@@ -32,7 +30,7 @@ body,
   border-radius: 4px;
 }
 
-/* Themed scrollbar for Analytics board */
+/* Themed scrollbar for Analytics board – clean, visible, matches glass panel */
 .analytics-scroll {
   scrollbar-width: thin;
   scrollbar-color: rgba(0, 242, 255, 0.35) transparent;
@@ -52,6 +50,21 @@ body,
   background: rgba(0, 242, 255, 0.5);
 }
 
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+}
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
 /* Glassmorphism Utilities */
 .glass-panel {
   background: var(--color-glass-bg);
@@ -69,6 +82,7 @@ body,
   0%, 100% { opacity: 0.7; }
   50% { opacity: 1; }
 }
+
 
 @keyframes marquee {
   0% { transform: translateX(0%); }

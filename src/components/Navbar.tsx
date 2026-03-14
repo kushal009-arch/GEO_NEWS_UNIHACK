@@ -29,7 +29,7 @@ export default function Navbar({ onAnalyticsClick, onMenuClick }: NavbarProps) {
           )}
           <div className="rounded-[20px] border border-[rgba(0,242,255,0.1)] bg-[rgba(0,0,0,0.3)] backdrop-blur-[20px] px-4 py-2 shadow-[0_0_30px_rgba(0,240,255,0.08)]">
             <span className="text-lg font-semibold tracking-[0.2em] text-cyan-100 uppercase font-mono">
-              GEONEWS
+              Globe News
             </span>
           </div>
         </div>
