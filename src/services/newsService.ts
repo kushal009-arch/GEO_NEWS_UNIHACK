@@ -183,7 +183,8 @@ export async function deepResearch(newsItem: NewsItem): Promise<string> {
   `;
 
   try {
-    const response = await fetch(`${process.env.OLLAMA_HOST}/api/generate`, {
+    const ollamaHost = import.meta.env.VITE_OLLAMA_HOST ?? "http://localhost:11434";
+    const response = await fetch(`${ollamaHost}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -201,7 +202,7 @@ export async function deepResearch(newsItem: NewsItem): Promise<string> {
     return data.response;
   } catch (error) {
     console.error("Error during Deep Research:", error);
-    console.log(process.env.OLLAMA_HOST);
+    console.log(import.meta.env.VITE_OLLAMA_HOST);
     return "[OFFLINE] **Service Offline** \n\nEnsure Ollama is running and the `llama3.2:1b` model is available.";
   }
 }
