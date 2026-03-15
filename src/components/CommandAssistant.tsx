@@ -6,7 +6,7 @@ import {
   extractGotoCountry
 } from '../services/countryCoordinates';
 
-const BACKEND = 'http://localhost:5001';
+const BACKEND = import.meta.env.VITE_BACKEND_URL ?? (window.location.hostname === 'localhost' ? 'http://localhost:5001' : '');
 
 const SYSTEM_PROMPT = `You are an AI assistant for GeoNews, an intelligence-grade geopolitical news dashboard.
 
@@ -203,12 +203,15 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
 
     const result = await askGroq(apiMessage);
 
-    if (result.coords && onNavigateTo) {
-      onNavigateTo(result.coords);
-    } else if (result.gotoCountry) {
-      const rawReply = `##GOTO:${result.gotoCountry}`;
-      const countryFromTag = extractGotoCountry(rawReply);
-      if (countryFromTag && onCenterOnCountry) onCenterOnCountry(countryFromTag);
+    const isSummarize = displayOverride === 'Summarize latest news' || apiMessage === SUMMARIZE_LATEST_NEWS_PROMPT;
+    if (!isSummarize) {
+      if (result.coords && onNavigateTo) {
+        onNavigateTo(result.coords);
+      } else if (result.gotoCountry) {
+        const rawReply = `##GOTO:${result.gotoCountry}`;
+        const countryFromTag = extractGotoCountry(rawReply);
+        if (countryFromTag && onCenterOnCountry) onCenterOnCountry(countryFromTag);
+      }
     }
 
     let replyText = result.text;

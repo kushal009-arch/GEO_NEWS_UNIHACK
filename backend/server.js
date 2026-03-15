@@ -925,19 +925,17 @@ app.get("/api/sync/needed", async (req, res) => {
     if (!supabase) return res.json({ needed: false });
     try {
         const THIRTY_MINUTES_MS = 30 * 60 * 1000;
-        // Try timestamp first, fall back to checking row count
         const { data } = await supabase
             .from("news_events")
-            .select("id")
-            .order("id", { ascending: false })
+            .select("created_at")
+            .order("created_at", { ascending: false })
             .limit(1)
             .single();
 
         if (!data) return res.json({ needed: true });
 
-        // Without created_at, use localStorage on client side for timing
-        // Server just checks if data exists
-        res.json({ needed: false });
+        const age = Date.now() - new Date(data.created_at).getTime();
+        res.json({ needed: age > THIRTY_MINUTES_MS });
     } catch {
         res.json({ needed: true });
     }
@@ -1070,7 +1068,7 @@ app.post("/api/chat", async (req, res) => {
                 const { data } = await supabase
                     .from("news_events")
                     .select("title, category, sentiment")
-                    .order("id", { ascending: false })
+                    .order("created_at", { ascending: false })
                     .limit(8);
                 if (data?.length) {
                     newsContext = "\n\nRecent headlines you're aware of:\n" +
@@ -1195,6 +1193,12 @@ Format the response in clean Markdown with headers. Be concise and authoritative
 });
 
 // ---------------------------------------------------------------------------
+// Serve built frontend (production) — dist/ lives one level up from backend/
+// ---------------------------------------------------------------------------
+const distPath = path.join(__dirname, "..", "dist");
+app.use(express.static(distPath));
+
+// ---------------------------------------------------------------------------
 // Global error handler - catches unhandled route errors
 // ---------------------------------------------------------------------------
 app.use((err, req, res, _next) => {
@@ -1202,8 +1206,13 @@ app.use((err, req, res, _next) => {
     res.status(500).json({ error: "Internal server error" });
 });
 
-// 404 handler
+// SPA fallback — send index.html for any non-API route
 app.use((req, res) => {
+    const indexPath = path.join(distPath, "index.html");
+    const fs = require("fs");
+    if (fs.existsSync(indexPath) && !req.originalUrl.startsWith("/api/")) {
+        return res.sendFile(indexPath);
+    }
     res.status(404).json({ error: `Route not found: ${req.method} ${req.originalUrl}` });
 });
 
@@ -1271,6 +1280,13 @@ async function startServer() {
         } catch (err) {
             console.warn("[GeoNews] Supabase connectivity check failed:", err.message);
         }
+    }
+
+    // Auto-sync fresh news on startup if NewsAPI + Supabase are configured
+    if (supabase && process.env.NEWS_API_KEY) {
+        syncNewsFromAPI()
+            .then((r) => console.log(`[GeoNews] Startup sync: ${r.synced} synced, ${r.enriched} enriched`))
+            .catch((err) => console.warn("[GeoNews] Startup sync failed (non-critical):", err.message));
     }
 
     server = app.listen(PORT, () => {

@@ -1,4 +1,4 @@
-const BACKEND = 'http://localhost:5001';
+const BACKEND = import.meta.env.VITE_BACKEND_URL ?? (typeof window !== 'undefined' && window.location.hostname === 'localhost' ? 'http://localhost:5001' : '');
 
 export interface RiskIndex {
   id?: number;

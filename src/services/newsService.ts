@@ -4,6 +4,8 @@ import { NewsCategory, NewsItem, TrendAnalysis, UserInterest } from "../types";
 // Temporarily keep AI disabled while debugging map + backend flow
 const ai = null;
 
+const BACKEND = import.meta.env.VITE_BACKEND_URL ?? (typeof window !== 'undefined' && window.location.hostname === 'localhost' ? 'http://localhost:5001' : '');
+
 // Backend-style filtering (mirrors backend/server.js) for local fallback
 function distanceDegrees(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const dLat = lat1 - lat2;
@@ -54,7 +56,7 @@ function applyPersonalizedImpact(data: NewsItem[], interests: UserInterest[]): N
 
 export async function fetchAllNews(interests: UserInterest[] = []): Promise<NewsItem[]> {
   try {
-    const response = await fetch('http://localhost:5001/api/news/all');
+    const response = await fetch(`${BACKEND}/api/news/all`);
     if (!response.ok) throw new Error('Backend request failed');
     const data: NewsItem[] = await response.json();
     return applyPersonalizedImpact(data, interests);
@@ -108,7 +110,7 @@ export async function fetchNews(
       daysAgo: String(daysAgo)
     });
 
-    const response = await fetch(`http://localhost:5001/api/news?${params.toString()}`);
+    const response = await fetch(`${BACKEND}/api/news?${params.toString()}`);
 
     if (!response.ok) {
       throw new Error("Backend request failed");
@@ -167,7 +169,7 @@ export async function fetchNews(
 // Deep Research via backend Groq API
 export async function deepResearch(newsItem: NewsItem): Promise<string> {
   try {
-    const response = await fetch('http://localhost:5001/api/deep-research', {
+    const response = await fetch(`${BACKEND}/api/deep-research`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -232,7 +234,7 @@ export async function analyzeTrends(): Promise<TrendAnalysis[]> {
 // Sync/cache stubs - delegate to backend which owns all sync state
 export async function isSyncNeeded(): Promise<boolean> {
   try {
-    const res = await fetch("http://localhost:5001/api/sync/needed");
+    const res = await fetch(`${BACKEND}/api/sync/needed`);
     if (!res.ok) return false;
     const json = await res.json();
     return json.needed ?? false;
@@ -242,7 +244,7 @@ export async function isSyncNeeded(): Promise<boolean> {
 }
 
 export async function syncLatestNews(): Promise<void> {
-  const res = await fetch("http://localhost:5001/api/sync", { method: "POST" });
+  const res = await fetch(`${BACKEND}/api/sync`, { method: "POST" });
   if (res.status === 429) {
     console.warn("[GeoNews] POST /api/sync returned 429 (rate limited). Skipping sync.");
     return;
