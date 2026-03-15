@@ -273,18 +273,45 @@ export async function fetchAndStoreNews(): Promise<void> {
 export async function fetchNewsFromSupabase(interests: UserInterest[] = []): Promise<NewsItem[]> {
   return fetchAllNews(interests);
 }
+/** Resolve coordinates to a human-readable location name via reverse geocoding, with ocean/region fallback. */
 export async function getLocationLabel(lat: number, lng: number): Promise<string> {
   try {
     const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=5`,
       { headers: { 'Accept-Language': 'en' } }
     );
     if (!res.ok) throw new Error('Nominatim error');
     const data = await res.json();
-    return data.address?.city || data.address?.town || data.address?.state || data.address?.country || `${lat.toFixed(2)}, ${lng.toFixed(2)}`;
-  } catch {
-    return `${lat.toFixed(2)}, ${lng.toFixed(2)}`;
-  }
+    const addr = data.address;
+    const name = addr?.city || addr?.town || addr?.state || addr?.country || data.display_name;
+    if (name && !/^\d/.test(name)) return name;
+  } catch { /* fall through to local lookup */ }
+
+  // Fallback: map coordinates to well-known ocean / region names
+  return getRegionFromCoords(lat, lng);
+}
+
+/** Offline region/ocean resolver for coordinates that Nominatim can't label. */
+function getRegionFromCoords(lat: number, lng: number): string {
+  // Oceans
+  if (lat > -60 && lat < 30 && lng > 20 && lng < 100)  return 'Indian Ocean';
+  if (lat > -60 && lat < 0  && lng > 100 && lng < 180)  return 'South Pacific Ocean';
+  if (lat >= 0  && lat < 60 && lng > 100 && lng < 180)  return 'North Pacific Ocean';
+  if (lat >= 0  && lat < 60 && lng > -180 && lng < -100) return 'North Pacific Ocean';
+  if (lat > -60 && lat < 0  && lng > -180 && lng < -70) return 'South Pacific Ocean';
+  if (lat > -60 && lat < 0  && lng >= -70 && lng < 20)  return 'South Atlantic Ocean';
+  if (lat >= 0  && lat < 60 && lng >= -80 && lng < -5)  return 'North Atlantic Ocean';
+  if (lat <= -60) return 'Southern Ocean';
+  if (lat >= 60 && lng > -180 && lng < 180) return 'Arctic Ocean';
+  // Land regions (broad)
+  if (lat > 10 && lat < 40 && lng > 25 && lng < 65) return 'Middle East';
+  if (lat > 35 && lat < 72 && lng > -15 && lng < 40) return 'Europe';
+  if (lat > -35 && lat < 10 && lng > -20 && lng < 55) return 'Africa';
+  if (lat > 5 && lat < 55 && lng > 65 && lng < 145) return 'Asia';
+  if (lat > 25 && lat < 50 && lng > -130 && lng < -60) return 'North America';
+  if (lat > -55 && lat < 15 && lng > -80 && lng < -35) return 'South America';
+  if (lat > -45 && lat < -10 && lng > 110 && lng < 160) return 'Oceania';
+  return `${lat.toFixed(1)}°, ${lng.toFixed(1)}°`;
 }
 
 export async function analyzeImage(base64Image: string): Promise<string> {

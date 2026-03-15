@@ -255,9 +255,10 @@ export default function App() {
     setSelectedNews(item);
     setResearchReport(null);
     setLocationLabel(null);
-    // Use server-provided label (e.g. "ROW") or resolve via geocoding
-    if (item.locationLabel) {
-      setLocationLabel(item.locationLabel);
+    // Always reverse-geocode to get a real place name (skip only if label is already meaningful)
+    const serverLabel = item.locationLabel;
+    if (serverLabel && serverLabel !== 'ROW') {
+      setLocationLabel(serverLabel);
     } else {
       getLocationLabel(item.lat, item.lng).then(setLocationLabel).catch(() => {});
     }
@@ -414,16 +415,11 @@ export default function App() {
                   </span>
                 </div>
 
-                {/* Location label: show resolved place or ROW (never raw lat/lon) */}
+                {/* Location label */}
                 <div className="flex items-center gap-1.5 text-white/55">
                   <MapPin size={11} className="shrink-0" />
                   <span className="text-[10px] font-mono tracking-wide">
-                    {(() => {
-                      const label = locationLabel ?? selectedNews.locationLabel;
-                      const looksLikeCoords = /^-?\d+\.?\d*°?\s*,\s*-?\d+\.?\d*°?$/.test((label || '').trim());
-                      if (label && !looksLikeCoords) return label;
-                      return 'ROW';
-                    })()}
+                    {locationLabel || 'Resolving...'}
                   </span>
                 </div>
 
