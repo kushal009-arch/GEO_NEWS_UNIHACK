@@ -104,7 +104,8 @@ export async function fetchNews(
       lat: String(centerLat),
       lng: String(centerLng),
       zoom: String(zoom),
-      category: category
+      category: category,
+      daysAgo: String(daysAgo)
     });
 
     const response = await fetch(`http://localhost:5001/api/news?${params.toString()}`);

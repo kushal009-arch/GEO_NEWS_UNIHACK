@@ -33,7 +33,7 @@ export default function App() {
 
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [showSentiment, setShowSentiment] = useState(false);
-  const [daysAgo, setDaysAgo] = useState(0);
+  const [daysAgo, setDaysAgo] = useState(1);
   // Start at 1 so news loads automatically as soon as the map reports its bounds
   const [applyCounter, setApplyCounter] = useState(1);
   const [centerOn, setCenterOn] = useState<{ lat: number; lng: number } | null>(null);
@@ -143,23 +143,27 @@ export default function App() {
         }
       } catch { /* bounds proxy may not be ready yet */ }
     }
+
+    // Sort by impact (highest first), then alphabetically by title
+    filtered = [...filtered].sort((a, b) => {
+      const impDiff = (b.importance ?? 0) - (a.importance ?? 0);
+      if (impDiff !== 0) return impDiff;
+      return (a.title ?? '').localeCompare(b.title ?? '');
+    });
+
+    // Cap at 20 events for the visible region
+    if (filtered.length > 20) {
+      filtered = filtered.slice(0, 20);
+    }
+
     return filtered;
   }, [news, activeCategory, bounds, zoom]);
 
-  // One-time startup: sync NewsAPI to Supabase only when the server-side 30-min
-  // window has elapsed. Shared across ALL users - if another user synced recently,
-  // everyone skips NewsAPI. News loads instantly from the localStorage cache.
+  // On startup: load news from the database (no live sync).
+  // Live sync only happens when the user explicitly sets the temporal filter to
+  // "Live" and presses "Set Filters".
   useEffect(() => {
-    const init = async () => {
-      const syncDue = await isSyncNeeded();
-      if (syncDue) {
-        await syncLatestNews().catch(console.error);
-        markSyncDone();
-        invalidateNewsCache(); // reload fresh Supabase data after sync
-      }
-      loadNews();
-    };
-    init();
+    loadNews();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -167,7 +171,7 @@ export default function App() {
   useEffect(() => {
     const timer = setTimeout(() => {
       loadNews();
-    }, 400);
+    }, 2000);
 
     return () => clearTimeout(timer);
   }, [loadNews]);
@@ -322,11 +326,19 @@ export default function App() {
         daysAgo={daysAgo}
         setDaysAgo={setDaysAgo}
         news={news}
-        onApplyFilters={() => setApplyCounter((prev) => prev + 1)}
+        onApplyFilters={async () => {
+          if (daysAgo === 0) {
+            // Live mode: sync fresh news from NewsAPI into Supabase first
+            setIsLoading(true);
+            await syncLatestNews().catch(console.error);
+            markSyncDone();
+            setIsLoading(false);
+          }
+          setApplyCounter((prev) => prev + 1);
+        }}
         onSyncNews={async () => {
-          // Manual sync: force-expire cache so Supabase + NewsAPI are both re-hit
+          // Manual sync: pull latest into DB then reload
           setIsLoading(true);
-          invalidateNewsCache();
           await syncLatestNews().catch(console.error);
           markSyncDone();
           await loadNews();
