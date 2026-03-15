@@ -35,6 +35,45 @@ const capitalizeCountry = (name: string): string =>
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(' ');
 
+/** User prompt sent to the AI for "Summarize latest news": top 3 only, max 100 words, fixed format. */
+const SUMMARIZE_LATEST_NEWS_PROMPT = `Summarize the latest news. Your response must:
+(1) Summarize only the top 3 news items
+(2) Be at most 100 words total
+(3) Use this exact format (plain text, no markdown like ** or other formatting). You must end each line with a newline:
+\`\`\`Here's the summary of the latest news:
+- [first news item]\n
+- [second news item]\n
+- [third news item]\n\`\`\``;
+
+const MAX_SUMMARY_WORDS = 100;
+
+const SUMMARY_INTRO = "Here's the summary of the latest news:";
+
+/** Strip **, remove unnecessary headlines, enforce format and max words for summary response. */
+function sanitizeSummaryResponse(text: string, maxWords: number = MAX_SUMMARY_WORDS): string {
+  if (!text || typeof text !== 'string') return text;
+  let out = text.replace(/\*\*/g, '').trim();
+  const lines = out.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  const introIdx = lines.findIndex((l) =>
+    l.toLowerCase().includes("here's the summary") || l.toLowerCase().includes('summary of the latest news')
+  );
+  let startIdx = 0;
+  if (introIdx >= 0) {
+    startIdx = introIdx;
+    lines[startIdx] = SUMMARY_INTRO;
+  } else if (lines.length > 0 && lines[0].length <= 55 && !lines[0].endsWith('.') && !lines[0].startsWith('-')) {
+    startIdx = 1;
+  }
+  out = lines.slice(startIdx).join('\n').trim();
+  out = out.replace(/\. - /g, '.\n- ').replace(/: - /g, ':\n- ');
+  const words = out.split(/\s+/).filter(Boolean);
+  if (words.length > maxWords) {
+    out = words.slice(0, maxWords).join(' ');
+    out = out.replace(/\. - /g, '.\n- ').replace(/: - /g, ':\n- ');
+  }
+  return out;
+}
+
 const FAQ: { keywords: string[]; answer: string }[] = [
   {
     keywords: ['zoom', 'in', 'out'],
@@ -128,7 +167,7 @@ async function askGroq(
   }
 }
 
-/** Commands that need user to type extra info (e.g. country name). When set, the text input is shown. */
+/** Commands that need extra user input (e.g. country name). When set, the text input is shown. */
 type PendingCommand = 'take_me_to' | null;
 
 const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, onNavigateTo }) => {
@@ -150,20 +189,20 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isThinking]);
 
-  const handleSend = async (messageToSend?: string) => {
-    const trimmed = (messageToSend ?? input.trim()).trim();
-    if (!trimmed || isThinking) return;
+  const handleSend = async (messageOverride?: string, displayOverride?: string) => {
+    const apiMessage = (messageOverride ?? input.trim()).trim();
+    if (!apiMessage || isThinking) return;
+    const displayText = displayOverride ?? apiMessage;
 
     const nextId = messages.length ? messages[messages.length - 1].id + 1 : 1;
-    const userMessage: ChatMessage = { id: nextId, from: 'user', text: trimmed };
+    const userMessage: ChatMessage = { id: nextId, from: 'user', text: displayText };
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setPendingCommand(null);
     setIsThinking(true);
 
-    const result = await askGroq(trimmed);
+    const result = await askGroq(apiMessage);
 
-    // Handle navigation
     if (result.coords && onNavigateTo) {
       onNavigateTo(result.coords);
     } else if (result.gotoCountry) {
@@ -172,17 +211,21 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
       if (countryFromTag && onCenterOnCountry) onCenterOnCountry(countryFromTag);
     }
 
-    const reply: ChatMessage = { id: nextId + 1, from: 'assistant', text: result.text };
+    let replyText = result.text;
+    if (displayOverride === 'Summarize latest news' || apiMessage === SUMMARIZE_LATEST_NEWS_PROMPT) {
+      replyText = sanitizeSummaryResponse(replyText);
+    }
+    const reply: ChatMessage = { id: nextId + 1, from: 'assistant', text: replyText };
     setMessages((prev) => [...prev, reply]);
     setIsThinking(false);
   };
 
-  /** Run a command that needs no extra input (sends immediately). */
+  /** Run a command that needs no extra input (sends to AI immediately). */
   const handleDirectCommand = (prompt: string) => {
     handleSend(prompt);
   };
 
-  /** Open the "extra info" flow for a command (shows text input). */
+  /** Open the extra-info flow (shows text input). */
   const handleCommandNeedingInput = (command: PendingCommand) => {
     setPendingCommand(command);
     setInput('');
@@ -204,7 +247,6 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
         setPendingCommand(null);
         return;
       }
-      // Navigate directly; no AI API call
       const displayName = capitalizeCountry(coords.canonicalName);
       const nextId = messages.length ? messages[messages.length - 1].id + 1 : 1;
       setMessages((prev) => [
@@ -284,8 +326,8 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
                   <div
                     className={
                       m.from === 'user'
-                        ? 'max-w-[80%] rounded-xl bg-[#00f0ff]/15 border border-[#00f0ff]/40 px-3 py-2 text-xs text-cyan-50 font-sans'
-                        : 'max-w-[80%] rounded-xl bg-white/5 border border-white/15 px-3 py-2 text-xs text-slate-100 font-sans'
+                        ? 'max-w-[80%] rounded-xl bg-[#00f0ff]/15 border border-[#00f0ff]/40 px-3 py-2 text-xs text-cyan-50 font-sans whitespace-pre-line'
+                        : 'max-w-[80%] rounded-xl bg-white/5 border border-white/15 px-3 py-2 text-xs text-slate-100 font-sans whitespace-pre-line'
                     }
                   >
                     {m.text}
@@ -306,7 +348,7 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => handleDirectCommand('Summarize latest news')}
+                  onClick={() => handleSend(SUMMARIZE_LATEST_NEWS_PROMPT, 'Summarize latest news')}
                   className="px-2.5 py-1 rounded-full bg-white/5 border border-white/20 text-[10px] text-slate-200 font-mono tracking-[0.14em] uppercase hover:bg-white/10"
                 >
                   Summarize Latest News
@@ -314,7 +356,7 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
                 <button
                   type="button"
                   onClick={() => handleDirectCommand('Find conflict zones')}
-                  className="px-2.5 py-1 rounded-full bg-white/5 border border-white/20 text-[10px] text-slate-200 font-mono tracking-[0.14em] uppercase hover:bg-white/10"
+                  className="hidden px-2.5 py-1 rounded-full bg-white/5 border border-white/20 text-[10px] text-slate-200 font-mono tracking-[0.14em] uppercase hover:bg-white/10"
                 >
                   Find Conflict Zones
                 </button>

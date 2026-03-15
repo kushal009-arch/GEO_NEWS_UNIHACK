@@ -179,7 +179,7 @@ export async function deepResearch(newsItem: NewsItem): Promise<string> {
     2. Primary Ripple Effects (Immediate economic/social impact)
     3. Secondary Ripple Effects (Long-term global/supply chain impact)
 
-    Format the response in clean Markdown. Be concise and authoritative.
+    Format the response in clean Markdown. Keep names and place names capitalized; do not normalize or lowercase them. Be concise and authoritative.
   `;
 
   try {

@@ -145,14 +145,32 @@ const Map = memo(function Map({
       onCenterComplete?.();
       return;
     }
-    globeRef.current?.pointOfView({ lat, lng, altitude: 1.2 }, 1000);
-    const t = setTimeout(() => {
+    const globe = globeRef.current;
+    if (!globe) return;
+    const pov = globe.pointOfView() as { lat?: number; lng?: number; altitude?: number } | undefined;
+    const startLat = pov?.lat ?? lat;
+    const startLng = pov?.lng ?? lng;
+    const zoomOutMs = 700;
+    const rotateMs = 600;
+    const zoomInMs = 1000;
+    globe.pointOfView({ lat: startLat, lng: startLng, altitude: 2.5 }, zoomOutMs);
+    const t1 = setTimeout(() => {
+      globe.pointOfView({ lat, lng, altitude: 2.5 }, rotateMs);
+    }, zoomOutMs + 50);
+    const t2 = setTimeout(() => {
+      globe.pointOfView({ lat, lng, altitude: 1.2 }, zoomInMs);
+    }, zoomOutMs + 50 + rotateMs + 50);
+    const t3 = setTimeout(() => {
       setMapCenter(centerOn);
       setUiZoom(targetZoom);
       onBoundsChange(syntheticBounds, targetZoom);
       onCenterComplete?.();
-    }, 1100);
-    return () => clearTimeout(t);
+    }, zoomOutMs + 50 + rotateMs + 50 + zoomInMs + 50);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
   }, [centerOn, onCenterComplete, onBoundsChange, isDetailedMap]);
 
   useEffect(() => {

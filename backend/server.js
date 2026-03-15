@@ -7,6 +7,7 @@ const rateLimit = require("express-rate-limit");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 const { createClient } = require("@supabase/supabase-js");
 const { Client: PgClient } = require("pg");
+const { COUNTRY_COORDS, COUNTRY_NAME_TO_CODE } = require("./countryCoords");
 
 // ---------------------------------------------------------------------------
 // Required additional tables — run once in Supabase SQL editor:
@@ -111,66 +112,46 @@ function mapRow(row) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Country code (ISO 3166-1 alpha-2) -> capital city coordinates (for NewsAPI geocoding)
-// All points are lat/lng of the capital or primary city so pins land accurately.
-// ---------------------------------------------------------------------------
-const COUNTRY_COORDS = {
-  ae: { lat: 24.4539, lng: 54.3773 },   // Abu Dhabi, UAE
-  ar: { lat: -34.6037, lng: -58.3816 }, // Buenos Aires
-  at: { lat: 48.2082, lng: 16.3738 },   // Vienna
-  au: { lat: -35.2809, lng: 149.13 },   // Canberra (was Sydney)
-  be: { lat: 50.8503, lng: 4.3517 },    // Brussels
-  bg: { lat: 42.6977, lng: 23.3219 },   // Sofia
-  br: { lat: -15.8267, lng: -47.9218 }, // Brasília
-  ca: { lat: 45.4215, lng: -75.6972 },  // Ottawa
-  ch: { lat: 46.948, lng: 7.4474 },     // Bern
-  cn: { lat: 39.9042, lng: 116.4074 }, // Beijing
-  co: { lat: 4.711, lng: -74.0721 },   // Bogotá
-  cz: { lat: 50.0755, lng: 14.4378 },   // Prague
-  de: { lat: 52.52, lng: 13.405 },      // Berlin
-  eg: { lat: 30.0444, lng: 31.2357 },   // Cairo
-  fr: { lat: 48.8566, lng: 2.3522 },    // Paris
-  gb: { lat: 51.5074, lng: -0.1278 },   // London
-  gr: { lat: 37.9838, lng: 23.7275 },   // Athens
-  hk: { lat: 22.3193, lng: 114.1694 }, // Hong Kong
-  hu: { lat: 47.4979, lng: 19.0402 },   // Budapest
-  id: { lat: -6.2088, lng: 106.8456 }, // Jakarta
-  ie: { lat: 53.3498, lng: -6.2603 },  // Dublin
-  il: { lat: 31.7683, lng: 35.2137 },  // Jerusalem
-  in: { lat: 28.6139, lng: 77.209 },   // New Delhi
-  ir: { lat: 35.6892, lng: 51.389 },   // Tehran (Iran; used by detectCountry)
-  it: { lat: 41.9028, lng: 12.4964 },  // Rome
-  jp: { lat: 35.6762, lng: 139.6503 }, // Tokyo
-  kr: { lat: 37.5665, lng: 126.978 },  // Seoul
-  lt: { lat: 54.6872, lng: 25.2797 },  // Vilnius
-  lv: { lat: 56.9496, lng: 24.1052 },  // Riga
-  ma: { lat: 34.0209, lng: -6.8416 },  // Rabat
-  mx: { lat: 19.4326, lng: -99.1332 }, // Mexico City
-  my: { lat: 3.139, lng: 101.6869 },   // Kuala Lumpur
-  ng: { lat: 9.0765, lng: 7.3986 },    // Abuja
-  nl: { lat: 52.3676, lng: 4.9041 },   // Amsterdam
-  no: { lat: 59.9139, lng: 10.7522 },  // Oslo
-  nz: { lat: -41.2866, lng: 174.7762 },// Wellington
-  ph: { lat: 14.5995, lng: 120.9842 }, // Manila
-  pl: { lat: 52.2297, lng: 21.0122 },  // Warsaw
-  pt: { lat: 38.7223, lng: -9.1393 },  // Lisbon
-  ro: { lat: 44.4268, lng: 26.1025 },  // Bucharest
-  rs: { lat: 44.7866, lng: 20.4489 },  // Belgrade
-  ru: { lat: 55.7558, lng: 37.6173 },  // Moscow
-  sa: { lat: 24.7136, lng: 46.6753 },  // Riyadh
-  se: { lat: 59.3293, lng: 18.0686 },  // Stockholm
-  sg: { lat: 1.3521, lng: 103.8198 },  // Singapore
-  si: { lat: 46.0569, lng: 14.5058 },  // Ljubljana
-  sk: { lat: 48.1486, lng: 17.1077 },  // Bratislava
-  th: { lat: 13.7563, lng: 100.5018 }, // Bangkok
-  tr: { lat: 39.9334, lng: 32.8597 },  // Ankara
-  tw: { lat: 25.033, lng: 121.5654 },   // Taipei
-  ua: { lat: 50.4501, lng: 30.5234 },  // Kyiv
-  us: { lat: 38.9072, lng: -77.0369 }, // Washington DC
-  ve: { lat: 10.4806, lng: -66.9036 }, // Caracas
-  za: { lat: -25.7479, lng: 28.2293 },  // Pretoria
-};
+// COUNTRY_COORDS and COUNTRY_NAME_TO_CODE are in ./countryCoords.js (all countries + name→code for QA).
+
+// Keys sorted by length descending so "south korea" matches before "korea"
+const COUNTRY_NAME_KEYS = Object.keys(COUNTRY_NAME_TO_CODE).sort((a, b) => b.length - a.length);
+
+/** Extract country code from QA model answer (e.g. "Japan", "The event holds in Germany"). */
+function countryCodeFromQAAnswer(rawAnswer) {
+  if (!rawAnswer || typeof rawAnswer !== "string") return null;
+  const normalized = rawAnswer.toLowerCase().trim().replace(/\s+/g, " ").replace(/[.,;:!?]$/, "");
+  if (!normalized) return null;
+
+  // 1) Direct lookup
+  let code = COUNTRY_NAME_TO_CODE[normalized] || COUNTRY_NAME_TO_CODE[normalized.replace(/^the\s+/, "")];
+  if (code) return code;
+
+  // 2) Strip common prefixes and try again
+  const prefixes = [
+    "the event holds in ", "this event holds in ", "this event is in ",
+    "the event is in ", "the event takes place in ", "this event takes place in ",
+    "in ", "in the "
+  ];
+  for (const p of prefixes) {
+    if (normalized.startsWith(p)) {
+      const rest = normalized.slice(p.length).trim().replace(/[.,;:!?]$/, "");
+      code = COUNTRY_NAME_TO_CODE[rest] || COUNTRY_NAME_TO_CODE[rest.replace(/^the\s+/, "")];
+      if (code) return code;
+    }
+  }
+
+  // 3) Substring match: answer contains a known country name (longest first)
+  for (const key of COUNTRY_NAME_KEYS) {
+    const re = new RegExp("(^|[^a-z])" + key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[^a-z])", "i");
+    if (re.test(normalized)) {
+      code = COUNTRY_NAME_TO_CODE[key];
+      if (code) return code;
+    }
+  }
+
+  return null;
+}
 
 // NewsAPI source name -> country code (best-effort geocoding since API has no source.country)
 const SOURCE_COUNTRY_MAP = {
@@ -232,6 +213,34 @@ function detectCountry(article) {
   if (/\bnigeria\b|\blagos\b/.test(title)) return { code: "ng", isRestOfWorld: false };
   if (/\bsouth africa\b/.test(title)) return { code: "za", isRestOfWorld: false };
   return { code: "us", isRestOfWorld: true }; // no match -> Rest of World
+}
+
+// DistilBERT QA pipeline (loaded on server init); null if load failed
+let qaPipeline = null;
+
+const QA_COUNTRY_QUESTION = "In which country does this event hold?";
+
+/**
+ * Use DistilBERT QA to infer country from article text. Returns { code, isRestOfWorld }.
+ * Maps model output to country code via countryCodeFromQAAnswer, then to coordinates via COUNTRY_COORDS.
+ */
+async function inferCountryFromArticle(article, pipeline) {
+  if (!pipeline) return detectCountry(article);
+  const title = (article.title || "").trim();
+  const desc = (article.description || article.content || article.title || "").trim();
+  const context = `${title}. ${desc}`.trim();
+  if (context.length < 20) return detectCountry(article);
+  try {
+    const out = await pipeline(QA_COUNTRY_QUESTION, context.slice(0, 512));
+    const raw = (out && out.answer) ? String(out.answer).trim() : "";
+    const code = countryCodeFromQAAnswer(raw);
+    if (code && COUNTRY_COORDS[code]) {
+      return { code, isRestOfWorld: false };
+    }
+  } catch (err) {
+    console.warn("[GeoNews] QA country inference failed for article:", err.message);
+  }
+  return detectCountry(article);
 }
 
 // NewsAPI category -> GeoNews category
@@ -332,13 +341,18 @@ async function syncNewsFromAPI() {
     }
   }
 
-  const rows = allArticles
-    .filter((a) => a.title && a.title !== "[Removed]" && a.url)
-    .map((a) => {
-      const { code, isRestOfWorld } = detectCountry(a);
+  const filtered = allArticles.filter((a) => a.title && a.title !== "[Removed]" && a.url);
+  const rows = [];
+  const BATCH = 5;
+  for (let i = 0; i < filtered.length; i += BATCH) {
+    const batch = filtered.slice(i, i + BATCH);
+    const results = await Promise.all(batch.map((a) => inferCountryFromArticle(a, qaPipeline)));
+    for (let j = 0; j < batch.length; j++) {
+      const a = batch[j];
+      const { code, isRestOfWorld } = results[j];
       const coords = COUNTRY_COORDS[code] || COUNTRY_COORDS["us"];
       const jitter = () => (Math.random() - 0.5) * 1.5;
-      return {
+      rows.push({
         title: a.title,
         content: a.description || a.title,
         source: a.source?.name || "Unknown",
@@ -349,8 +363,9 @@ async function syncNewsFromAPI() {
         location_label: isRestOfWorld ? "ROW" : null,
         impact_score: inferImportance(a),
         sentiment: inferSentiment(a.title),
-      };
-    });
+      });
+    }
+  }
 
   if (rows.length === 0) {
     console.log("[GeoNews] No articles to upsert.");
@@ -1190,6 +1205,15 @@ let server;
 async function startServer() {
     if (supabase && process.env.DATABASE_URL) {
         await ensureTimestampColumn();
+    }
+
+    // Load DistilBERT QA model for country inference (pull on first run)
+    try {
+        const { pipeline } = await import("@xenova/transformers");
+        qaPipeline = await pipeline("question-answering", "Xenova/distilbert-base-uncased-distilled-squad");
+        console.log("[GeoNews] DistilBERT QA model loaded (country inference)");
+    } catch (err) {
+        console.warn("[GeoNews] DistilBERT QA model not loaded:", err.message);
     }
 
     // Startup connectivity check

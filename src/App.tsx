@@ -167,11 +167,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reload news whenever filters or bounds change (debounced)
+  // Reload news 100ms after user stops scrolling / changing view (debounced)
   useEffect(() => {
     const timer = setTimeout(() => {
       loadNews();
-    }, 2000);
+    }, 100);
 
     return () => clearTimeout(timer);
   }, [loadNews]);
@@ -499,14 +499,14 @@ export default function App() {
                     <div className="flex flex-col text-left">
                       <span className="font-bold text-white flex items-center gap-2 text-xs">
                         <Zap size={14} className="text-[#00f0ff]" />
-                        Deep Engine Scan
+                        Deep Scan
                       </span>
                       <span className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-mono">
-                        Ping offline Ollama core
+                        Analysis with AI
                       </span>
                     </div>
                     <div className="bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/50 text-[9px] font-bold px-3 py-1.5 rounded-lg group-hover:bg-[#00f0ff] group-hover:text-black transition-colors uppercase tracking-widest">
-                      Execute
+                      Analyze
                     </div>
                   </button>
                 ) : isDeepResearching ? (
@@ -514,10 +514,10 @@ export default function App() {
                     <Loader2 className="animate-spin text-[#00f0ff]" size={24} />
                     <div className="text-center">
                       <p className="text-[10px] font-bold text-[#00f0ff] uppercase tracking-widest">
-                        Local LLM Analyzing...
+                        Analyzing...
                       </p>
                       <p className="text-[9px] text-gray-500 mt-1 uppercase tracking-widest font-mono">
-                        Generating offline causality report
+                        Generating detailed report
                       </p>
                     </div>
                   </div>
