@@ -36,7 +36,7 @@ export default function App() {
   const [daysAgo, setDaysAgo] = useState(1);
   // Start at 1 so news loads automatically as soon as the map reports its bounds
   const [applyCounter, setApplyCounter] = useState(1);
-  const [centerOn, setCenterOn] = useState<{ lat: number; lng: number } | null>(null);
+  const [centerOn, setCenterOn] = useState<{ lat: number; lng: number; zoom?: number } | null>(null);
 
   const [interests, setInterests] = useState<UserInterest[]>([
     {
@@ -257,8 +257,12 @@ export default function App() {
     setLocationLabel(null);
     setIsGlitching(true);
     setTimeout(() => setIsGlitching(false), 320);
-    // Fetch location label in background
-    getLocationLabel(item.lat, item.lng).then(setLocationLabel).catch(() => {});
+    // Use server-provided label (e.g. "ROW") or resolve via geocoding
+    if (item.locationLabel) {
+      setLocationLabel(item.locationLabel);
+    } else {
+      getLocationLabel(item.lat, item.lng).then(setLocationLabel).catch(() => {});
+    }
   }, []);
 
   const handleToggleInterest = useCallback((interest: string) => {
@@ -269,10 +273,21 @@ export default function App() {
     );
   }, []);
 
-  const handleCenterOnCountry = useCallback((countryName: string) => {
+  /**
+   * Navigates the globe to be centered at the given country, then zooms in to country level.
+   * Uses country centroid from countryCoordinates; returns false if country is not in the lookup.
+   */
+  const navigateToCountry = useCallback((countryName: string, zoomLevel?: number): boolean => {
     const coords = getCountryCoordinates(countryName);
-    if (coords) setCenterOn({ lat: coords.lat, lng: coords.lng });
+    if (!coords) return false;
+    const targetZoom = zoomLevel != null ? zoomLevel : 6.5;
+    setCenterOn({ lat: coords.lat, lng: coords.lng, zoom: targetZoom });
+    return true;
   }, []);
+
+  const handleCenterOnCountry = useCallback((countryName: string) => {
+    navigateToCountry(countryName);
+  }, [navigateToCountry]);
 
   const handleCenterComplete = useCallback(() => {
     setCenterOn(null);
@@ -328,16 +343,23 @@ export default function App() {
         news={news}
         onApplyFilters={async () => {
           if (daysAgo === 0) {
-            // Live mode: sync fresh news from NewsAPI into Supabase first
-            setIsLoading(true);
-            await syncLatestNews().catch(console.error);
-            markSyncDone();
-            setIsLoading(false);
+            // Live mode: only sync when backend says data is stale (avoids 429 rate limit)
+            const needed = await isSyncNeeded().catch(() => false);
+            if (needed) {
+              console.log("[GeoNews] Live mode: sync needed, calling syncLatestNews()");
+              setIsLoading(true);
+              await syncLatestNews().catch(console.error);
+              markSyncDone();
+              setIsLoading(false);
+            } else {
+              console.log("[GeoNews] Live mode: sync not needed, skipping POST /api/sync");
+            }
           }
           setApplyCounter((prev) => prev + 1);
         }}
         onSyncNews={async () => {
           // Manual sync: pull latest into DB then reload
+          console.log("[GeoNews] Manual sync requested, calling syncLatestNews()");
           setIsLoading(true);
           await syncLatestNews().catch(console.error);
           markSyncDone();
@@ -394,11 +416,16 @@ export default function App() {
                   </span>
                 </div>
 
-                {/* Location label */}
+                {/* Location label: show resolved place or ROW (never raw lat/lon) */}
                 <div className="flex items-center gap-1.5 text-white/55">
                   <MapPin size={11} className="shrink-0" />
                   <span className="text-[10px] font-mono tracking-wide">
-                    {locationLabel ?? `${selectedNews.lat.toFixed(2)}°, ${selectedNews.lng.toFixed(2)}°`}
+                    {(() => {
+                      const label = locationLabel ?? selectedNews.locationLabel;
+                      const looksLikeCoords = /^-?\d+\.?\d*°?\s*,\s*-?\d+\.?\d*°?$/.test((label || '').trim());
+                      if (label && !looksLikeCoords) return label;
+                      return 'ROW';
+                    })()}
                   </span>
                 </div>
 

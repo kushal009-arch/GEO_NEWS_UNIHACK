@@ -15,8 +15,8 @@ interface MapProps {
   onMarkerClick: (item: NewsItem) => void;
   showHeatmap: boolean;
   showSentiment: boolean;
-  /** When set, globe flies to this point (e.g. from Command Assistant "Take me to X"). */
-  centerOn?: { lat: number; lng: number } | null;
+  /** When set, globe flies to this point (e.g. from Command Assistant "Take me to X"). Optional zoom for country-level focus. */
+  centerOn?: { lat: number; lng: number; zoom?: number } | null;
   /** Called after centering so App can clear centerOn. */
   onCenterComplete?: () => void;
   /** Active category - dims non-matching globe markers for focus */
@@ -129,7 +129,7 @@ const Map = memo(function Map({
 
   useEffect(() => {
     if (!centerOn) return;
-    const { lat, lng } = centerOn;
+    const { lat, lng, zoom: requestedZoom } = centerOn;
     const span = 25;
     const syntheticBounds = {
       getNorth: () => lat + span / 2,
@@ -138,17 +138,18 @@ const Map = memo(function Map({
       getWest: () => lng - span / 2,
       getCenter: () => ({ lat, lng })
     };
+    const targetZoom = requestedZoom != null ? Math.max(3, Math.min(10, requestedZoom)) : isDetailedMap ? 8 : 6.1;
     if (isDetailedMap) {
       setMapCenter(centerOn);
-      onBoundsChange(syntheticBounds, 8); // Stay in detailed view at city level
+      onBoundsChange(syntheticBounds, targetZoom);
       onCenterComplete?.();
       return;
     }
     globeRef.current?.pointOfView({ lat, lng, altitude: 1.2 }, 1000);
     const t = setTimeout(() => {
       setMapCenter(centerOn);
-      setUiZoom(6.1); // Slightly above 6 to trigger transition
-      onBoundsChange(syntheticBounds, 6.1);
+      setUiZoom(targetZoom);
+      onBoundsChange(syntheticBounds, targetZoom);
       onCenterComplete?.();
     }, 1100);
     return () => clearTimeout(t);
@@ -513,8 +514,20 @@ const Map = memo(function Map({
             tilesTransitionDuration={1000}
             htmlElementsData={isDetailedMap ? [] : visibleNews}
             htmlElement={makeGlobePin}
-            htmlLat="lat"
-            htmlLng="lng"
+            htmlLat={(d: object) => {
+              const item = d as NewsItem;
+              const lat = Number(item.lat);
+              return Number.isFinite(lat) ? lat : 0;
+            }}
+            htmlLng={(d: object) => {
+              const item = d as NewsItem;
+              let lng = Number(item.lng);
+              if (!Number.isFinite(lng)) return 0;
+              // Normalize to [-180, 180] so globe positions match lat/lng exactly
+              while (lng > 180) lng -= 360;
+              while (lng < -180) lng += 360;
+              return lng;
+            }}
             htmlAltitude={0.02}
             pathsData={visibleRoutes}
             pathPoints={getPathPoints}

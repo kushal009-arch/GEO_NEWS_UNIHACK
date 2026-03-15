@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MessageCircle, X, Minus, Send } from 'lucide-react';
+import { MessageCircle, X, Minus, Send, XCircle } from 'lucide-react';
 import {
   getCountryFromPhrase,
-  stripGotoTag,
+  getCountryCoordinates,
   extractGotoCountry
 } from '../services/countryCoordinates';
 
@@ -128,6 +128,9 @@ async function askGroq(
   }
 }
 
+/** Commands that need user to type extra info (e.g. country name). When set, the text input is shown. */
+type PendingCommand = 'take_me_to' | null;
+
 const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, onNavigateTo }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -135,10 +138,11 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
     {
       id: 0,
       from: 'assistant',
-      text: 'Command Assistant online. Ask about controls, layers, or try "Take me to Taiwan".',
+      text: 'Choose a command below. Some will ask for extra details.',
     },
   ]);
   const [input, setInput] = useState('');
+  const [pendingCommand, setPendingCommand] = useState<PendingCommand>(null);
   const [isThinking, setIsThinking] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -146,14 +150,15 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isThinking]);
 
-  const handleSend = async () => {
-    const trimmed = input.trim();
+  const handleSend = async (messageToSend?: string) => {
+    const trimmed = (messageToSend ?? input.trim()).trim();
     if (!trimmed || isThinking) return;
 
     const nextId = messages.length ? messages[messages.length - 1].id + 1 : 1;
     const userMessage: ChatMessage = { id: nextId, from: 'user', text: trimmed };
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
+    setPendingCommand(null);
     setIsThinking(true);
 
     const result = await askGroq(trimmed);
@@ -162,7 +167,6 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
     if (result.coords && onNavigateTo) {
       onNavigateTo(result.coords);
     } else if (result.gotoCountry) {
-      // Legacy country-name path
       const rawReply = `##GOTO:${result.gotoCountry}`;
       const countryFromTag = extractGotoCountry(rawReply);
       if (countryFromTag && onCenterOnCountry) onCenterOnCountry(countryFromTag);
@@ -173,8 +177,50 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
     setIsThinking(false);
   };
 
-  const handleQuickAction = (prompt: string) => {
-    setInput(prompt);
+  /** Run a command that needs no extra input (sends immediately). */
+  const handleDirectCommand = (prompt: string) => {
+    handleSend(prompt);
+  };
+
+  /** Open the "extra info" flow for a command (shows text input). */
+  const handleCommandNeedingInput = (command: PendingCommand) => {
+    setPendingCommand(command);
+    setInput('');
+  };
+
+  const handleSubmitExtraInfo = () => {
+    if (pendingCommand === 'take_me_to') {
+      const country = input.trim();
+      if (!country) return;
+      const coords = getCountryCoordinates(country);
+      if (!coords) {
+        const nextId = messages.length ? messages[messages.length - 1].id + 1 : 1;
+        setMessages((prev) => [
+          ...prev,
+          { id: nextId, from: 'user', text: `Take me to ${country}` },
+          { id: nextId + 1, from: 'assistant', text: 'Please enter a valid country name.' },
+        ]);
+        setInput('');
+        setPendingCommand(null);
+        return;
+      }
+      // Navigate directly; no AI API call
+      const displayName = capitalizeCountry(coords.canonicalName);
+      const nextId = messages.length ? messages[messages.length - 1].id + 1 : 1;
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId, from: 'user', text: `Take me to ${country}` },
+        { id: nextId + 1, from: 'assistant', text: `Taking you to ${displayName}.` },
+      ]);
+      setInput('');
+      setPendingCommand(null);
+      onCenterOnCountry?.(coords.canonicalName);
+    }
+  };
+
+  const handleCancelExtraInfo = () => {
+    setPendingCommand(null);
+    setInput('');
   };
 
   if (!isOpen) {
@@ -255,54 +301,65 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Quick actions & input */}
+            {/* Quick actions; text input only when a command needs extra info */}
             <div className="px-4 pb-3 pt-2 border-t border-white/10 space-y-2">
-              <div className="flex flex-wrap gap-2 mb-1">
+              <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => handleQuickAction('Summarize latest news')}
+                  onClick={() => handleDirectCommand('Summarize latest news')}
                   className="px-2.5 py-1 rounded-full bg-white/5 border border-white/20 text-[10px] text-slate-200 font-mono tracking-[0.14em] uppercase hover:bg-white/10"
                 >
                   Summarize Latest News
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleQuickAction('Find conflict zones')}
+                  onClick={() => handleDirectCommand('Find conflict zones')}
                   className="px-2.5 py-1 rounded-full bg-white/5 border border-white/20 text-[10px] text-slate-200 font-mono tracking-[0.14em] uppercase hover:bg-white/10"
                 >
                   Find Conflict Zones
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleQuickAction('Take me to India')}
+                  onClick={() => handleCommandNeedingInput('take_me_to')}
                   className="px-2.5 py-1 rounded-full bg-white/5 border border-white/20 text-[10px] text-slate-200 font-mono tracking-[0.14em] uppercase hover:bg-white/10"
                 >
-                  Take me to India
+                  Take me to…
                 </button>
               </div>
 
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleSend();
-                    }
-                  }}
-                  placeholder="Ask how to use GeoNews..."
-                  className="flex-1 rounded-lg bg-black/40 border border-white/20 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-[#00f0ff]"
-                />
-                <button
-                  type="button"
-                  onClick={handleSend}
-                  className="h-9 w-9 rounded-full border border-[#00f0ff]/60 bg-[#00f0ff]/15 text-[#00f0ff] flex items-center justify-center hover:bg-[#00f0ff]/30 transition-colors"
-                >
-                  <Send size={15} />
-                </button>
-              </div>
+              {pendingCommand !== null && (
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="text"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSubmitExtraInfo();
+                      if (e.key === 'Escape') handleCancelExtraInfo();
+                    }}
+                    placeholder={pendingCommand === 'take_me_to' ? 'Enter country name…' : 'Extra info…'}
+                    className="flex-1 rounded-lg bg-black/40 border border-white/20 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-[#00f0ff]"
+                    aria-label={pendingCommand === 'take_me_to' ? 'Country name' : 'Extra information'}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSubmitExtraInfo}
+                    disabled={!input.trim() || isThinking}
+                    className="h-9 w-9 rounded-full border border-[#00f0ff]/60 bg-[#00f0ff]/15 text-[#00f0ff] flex items-center justify-center hover:bg-[#00f0ff]/30 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+                    aria-label="Submit"
+                  >
+                    <Send size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCancelExtraInfo}
+                    className="h-9 w-9 rounded-full border border-white/20 text-slate-400 flex items-center justify-center hover:bg-white/10 hover:text-slate-200"
+                    aria-label="Cancel"
+                  >
+                    <XCircle size={14} />
+                  </button>
+                </div>
+              )}
             </div>
           </>
         )}

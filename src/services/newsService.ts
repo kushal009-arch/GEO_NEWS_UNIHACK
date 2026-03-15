@@ -259,10 +259,16 @@ export async function isSyncNeeded(): Promise<boolean> {
 
 export async function syncLatestNews(): Promise<void> {
   const res = await fetch("http://localhost:5001/api/sync", { method: "POST" });
+  if (res.status === 429) {
+    console.warn("[GeoNews] POST /api/sync returned 429 (rate limited). Skipping sync.");
+    return;
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    console.error("[GeoNews] POST /api/sync failed:", res.status, err);
     throw new Error(err.error || "Sync request failed");
   }
+  console.log("[GeoNews] POST /api/sync succeeded");
 }
 
 export function markSyncDone(): void { /* no-op: backend tracks sync state */ }

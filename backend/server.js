@@ -6,21 +6,12 @@ const compression = require("compression");
 const rateLimit = require("express-rate-limit");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
 const { createClient } = require("@supabase/supabase-js");
+const { Client: PgClient } = require("pg");
 
 // ---------------------------------------------------------------------------
 // Required additional tables — run once in Supabase SQL editor:
 //
-//   create table if not exists risk_indices (
-//     id          bigint generated always as identity primary key,
-//     category    text unique not null,
-//     region      text,
-//     risk_level  int,
-//     label       text,
-//     level_label text,
-//     forecast    text,
-//     so_what     text,
-//     created_at  timestamptz default now()
-//   );
+
 //
 //   create table if not exists ai_forecasts (
 //     id           bigint generated always as identity primary key,
@@ -66,7 +57,7 @@ const apiLimiter = rateLimit({
 });
 const syncLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 3,
+  max: 15,
   message: { error: "Sync rate limited. Try again in a few minutes." },
 });
 const aiLimiter = rateLimit({
@@ -100,6 +91,8 @@ if (!supabase) {
 // Handles both old column names (content/long/impact_score) and new schema
 // ---------------------------------------------------------------------------
 function mapRow(row) {
+  const lat = Number(row.lat);
+  const lng = Number(row.lng ?? row.long);
   return {
     id: String(row.id),
     title: row.title,
@@ -109,8 +102,9 @@ function mapRow(row) {
     source: row.source || "GeoNews",
     url: row.url || "",
     category: row.category,
-    lat: row.lat,
-    lng: row.lng ?? row.long,
+    lat: Number.isFinite(lat) ? lat : 0,
+    lng: Number.isFinite(lng) ? lng : 0,
+    locationLabel: row.location_label || undefined,
     timestamp: row.timestamp || row.created_at || new Date().toISOString(),
     importance: row.importance ?? row.impact_score ?? 3,
     sentiment: row.sentiment || "Neutral",
@@ -118,62 +112,64 @@ function mapRow(row) {
 }
 
 // ---------------------------------------------------------------------------
-// Country code -> representative coordinates (for NewsAPI geocoding)
+// Country code (ISO 3166-1 alpha-2) -> capital city coordinates (for NewsAPI geocoding)
+// All points are lat/lng of the capital or primary city so pins land accurately.
 // ---------------------------------------------------------------------------
 const COUNTRY_COORDS = {
-  ae: { lat: 24.47, lng: 54.37 },
-  ar: { lat: -34.6, lng: -58.38 },
-  at: { lat: 48.21, lng: 16.37 },
-  au: { lat: -33.87, lng: 151.21 },
-  be: { lat: 50.85, lng: 4.35 },
-  bg: { lat: 42.7, lng: 23.32 },
-  br: { lat: -15.79, lng: -47.88 },
-  ca: { lat: 45.42, lng: -75.69 },
-  ch: { lat: 46.95, lng: 7.45 },
-  cn: { lat: 39.91, lng: 116.39 },
-  co: { lat: 4.71, lng: -74.07 },
-  cz: { lat: 50.09, lng: 14.42 },
-  de: { lat: 52.52, lng: 13.4 },
-  eg: { lat: 30.06, lng: 31.25 },
-  fr: { lat: 48.85, lng: 2.35 },
-  gb: { lat: 51.51, lng: -0.12 },
-  gr: { lat: 37.98, lng: 23.73 },
-  hk: { lat: 22.32, lng: 114.17 },
-  hu: { lat: 47.5, lng: 19.04 },
-  id: { lat: -6.21, lng: 106.85 },
-  ie: { lat: 53.33, lng: -6.25 },
-  il: { lat: 31.77, lng: 35.22 },
-  in: { lat: 28.61, lng: 77.21 },
-  it: { lat: 41.9, lng: 12.49 },
-  jp: { lat: 35.68, lng: 139.69 },
-  kr: { lat: 37.57, lng: 126.98 },
-  lt: { lat: 54.69, lng: 25.28 },
-  lv: { lat: 56.95, lng: 24.11 },
-  ma: { lat: 33.99, lng: -6.85 },
-  mx: { lat: 19.43, lng: -99.13 },
-  my: { lat: 3.15, lng: 101.69 },
-  ng: { lat: 9.07, lng: 7.4 },
-  nl: { lat: 52.37, lng: 4.9 },
-  no: { lat: 59.91, lng: 10.75 },
-  nz: { lat: -41.29, lng: 174.78 },
-  ph: { lat: 14.6, lng: 120.98 },
-  pl: { lat: 52.23, lng: 21.01 },
-  pt: { lat: 38.72, lng: -9.14 },
-  ro: { lat: 44.43, lng: 26.1 },
-  rs: { lat: 44.8, lng: 20.46 },
-  ru: { lat: 55.75, lng: 37.62 },
-  sa: { lat: 24.69, lng: 46.72 },
-  se: { lat: 59.33, lng: 18.07 },
-  sg: { lat: 1.35, lng: 103.82 },
-  si: { lat: 46.05, lng: 14.51 },
-  sk: { lat: 48.15, lng: 17.11 },
-  th: { lat: 13.75, lng: 100.5 },
-  tr: { lat: 39.93, lng: 32.86 },
-  tw: { lat: 25.03, lng: 121.56 },
-  ua: { lat: 50.45, lng: 30.52 },
-  us: { lat: 38.89, lng: -77.04 },
-  ve: { lat: 10.49, lng: -66.88 },
-  za: { lat: -25.74, lng: 28.19 },
+  ae: { lat: 24.4539, lng: 54.3773 },   // Abu Dhabi, UAE
+  ar: { lat: -34.6037, lng: -58.3816 }, // Buenos Aires
+  at: { lat: 48.2082, lng: 16.3738 },   // Vienna
+  au: { lat: -35.2809, lng: 149.13 },   // Canberra (was Sydney)
+  be: { lat: 50.8503, lng: 4.3517 },    // Brussels
+  bg: { lat: 42.6977, lng: 23.3219 },   // Sofia
+  br: { lat: -15.8267, lng: -47.9218 }, // Brasília
+  ca: { lat: 45.4215, lng: -75.6972 },  // Ottawa
+  ch: { lat: 46.948, lng: 7.4474 },     // Bern
+  cn: { lat: 39.9042, lng: 116.4074 }, // Beijing
+  co: { lat: 4.711, lng: -74.0721 },   // Bogotá
+  cz: { lat: 50.0755, lng: 14.4378 },   // Prague
+  de: { lat: 52.52, lng: 13.405 },      // Berlin
+  eg: { lat: 30.0444, lng: 31.2357 },   // Cairo
+  fr: { lat: 48.8566, lng: 2.3522 },    // Paris
+  gb: { lat: 51.5074, lng: -0.1278 },   // London
+  gr: { lat: 37.9838, lng: 23.7275 },   // Athens
+  hk: { lat: 22.3193, lng: 114.1694 }, // Hong Kong
+  hu: { lat: 47.4979, lng: 19.0402 },   // Budapest
+  id: { lat: -6.2088, lng: 106.8456 }, // Jakarta
+  ie: { lat: 53.3498, lng: -6.2603 },  // Dublin
+  il: { lat: 31.7683, lng: 35.2137 },  // Jerusalem
+  in: { lat: 28.6139, lng: 77.209 },   // New Delhi
+  ir: { lat: 35.6892, lng: 51.389 },   // Tehran (Iran; used by detectCountry)
+  it: { lat: 41.9028, lng: 12.4964 },  // Rome
+  jp: { lat: 35.6762, lng: 139.6503 }, // Tokyo
+  kr: { lat: 37.5665, lng: 126.978 },  // Seoul
+  lt: { lat: 54.6872, lng: 25.2797 },  // Vilnius
+  lv: { lat: 56.9496, lng: 24.1052 },  // Riga
+  ma: { lat: 34.0209, lng: -6.8416 },  // Rabat
+  mx: { lat: 19.4326, lng: -99.1332 }, // Mexico City
+  my: { lat: 3.139, lng: 101.6869 },   // Kuala Lumpur
+  ng: { lat: 9.0765, lng: 7.3986 },    // Abuja
+  nl: { lat: 52.3676, lng: 4.9041 },   // Amsterdam
+  no: { lat: 59.9139, lng: 10.7522 },  // Oslo
+  nz: { lat: -41.2866, lng: 174.7762 },// Wellington
+  ph: { lat: 14.5995, lng: 120.9842 }, // Manila
+  pl: { lat: 52.2297, lng: 21.0122 },  // Warsaw
+  pt: { lat: 38.7223, lng: -9.1393 },  // Lisbon
+  ro: { lat: 44.4268, lng: 26.1025 },  // Bucharest
+  rs: { lat: 44.7866, lng: 20.4489 },  // Belgrade
+  ru: { lat: 55.7558, lng: 37.6173 },  // Moscow
+  sa: { lat: 24.7136, lng: 46.6753 },  // Riyadh
+  se: { lat: 59.3293, lng: 18.0686 },  // Stockholm
+  sg: { lat: 1.3521, lng: 103.8198 },  // Singapore
+  si: { lat: 46.0569, lng: 14.5058 },  // Ljubljana
+  sk: { lat: 48.1486, lng: 17.1077 },  // Bratislava
+  th: { lat: 13.7563, lng: 100.5018 }, // Bangkok
+  tr: { lat: 39.9334, lng: 32.8597 },  // Ankara
+  tw: { lat: 25.033, lng: 121.5654 },   // Taipei
+  ua: { lat: 50.4501, lng: 30.5234 },  // Kyiv
+  us: { lat: 38.9072, lng: -77.0369 }, // Washington DC
+  ve: { lat: 10.4806, lng: -66.9036 }, // Caracas
+  za: { lat: -25.7479, lng: 28.2293 },  // Pretoria
 };
 
 // NewsAPI source name -> country code (best-effort geocoding since API has no source.country)
@@ -205,35 +201,37 @@ const SOURCE_COUNTRY_MAP = {
   "afr": "au", "australian financial review": "au",
 };
 
-/** Map a NewsAPI article to a 2-letter country code for geolocation. */
+/**
+ * Map a NewsAPI article to a 2-letter country code for geolocation.
+ * Returns { code, isRestOfWorld }. isRestOfWorld true when no source or title match (fallback).
+ */
 function detectCountry(article) {
   const sourceName = (article.source?.name || "").toLowerCase();
-  if (SOURCE_COUNTRY_MAP[sourceName]) return SOURCE_COUNTRY_MAP[sourceName];
-  // Keyword scan on title for common place names
+  if (SOURCE_COUNTRY_MAP[sourceName]) return { code: SOURCE_COUNTRY_MAP[sourceName], isRestOfWorld: false };
   const title = (article.title || "").toLowerCase();
-  if (/\bukraine\b/.test(title)) return "ua";
-  if (/\brussia\b/.test(title)) return "ru";
-  if (/\bchina\b|\bchinese\b/.test(title)) return "cn";
-  if (/\biran\b|\bteheran\b/.test(title)) return "ir";
-  if (/\bisrael\b|\bgaza\b/.test(title)) return "il";
-  if (/\bindian?\b/.test(title)) return "in";
-  if (/\bjapan\b|\bjapanese\b/.test(title)) return "jp";
-  if (/\bgermany\b|\bgerman\b/.test(title)) return "de";
-  if (/\bfrance\b|\bfrench\b/.test(title)) return "fr";
-  if (/\buk\b|\bbritain\b|\bbritish\b/.test(title)) return "gb";
-  if (/\baustralia\b|\baustralian\b/.test(title)) return "au";
-  if (/\bcanada\b|\bcanadian\b/.test(title)) return "ca";
-  if (/\bbrazil\b|\bbrazilian\b/.test(title)) return "br";
-  if (/\bsouth korea\b|\bkorean\b/.test(title)) return "kr";
-  if (/\bsaudi arabia\b|\briyadh\b/.test(title)) return "sa";
-  if (/\bsingapore\b/.test(title)) return "sg";
-  if (/\bturkey\b|\bturkish\b|\bandkara\b/.test(title)) return "tr";
-  if (/\bpoland\b|\bpolish\b/.test(title)) return "pl";
-  if (/\bgreece\b|\bgreek\b/.test(title)) return "gr";
-  if (/\bromania\b|\bbucharest\b/.test(title)) return "ro";
-  if (/\bnigeria\b|\blagos\b/.test(title)) return "ng";
-  if (/\bsouth africa\b/.test(title)) return "za";
-  return "us"; // fallback
+  if (/\bukraine\b/.test(title)) return { code: "ua", isRestOfWorld: false };
+  if (/\brussia\b/.test(title)) return { code: "ru", isRestOfWorld: false };
+  if (/\bchina\b|\bchinese\b/.test(title)) return { code: "cn", isRestOfWorld: false };
+  if (/\biran\b|\bteheran\b/.test(title)) return { code: "ir", isRestOfWorld: false };
+  if (/\bisrael\b|\bgaza\b/.test(title)) return { code: "il", isRestOfWorld: false };
+  if (/\bindian?\b/.test(title)) return { code: "in", isRestOfWorld: false };
+  if (/\bjapan\b|\bjapanese\b/.test(title)) return { code: "jp", isRestOfWorld: false };
+  if (/\bgermany\b|\bgerman\b/.test(title)) return { code: "de", isRestOfWorld: false };
+  if (/\bfrance\b|\bfrench\b/.test(title)) return { code: "fr", isRestOfWorld: false };
+  if (/\buk\b|\bbritain\b|\bbritish\b/.test(title)) return { code: "gb", isRestOfWorld: false };
+  if (/\baustralia\b|\baustralian\b/.test(title)) return { code: "au", isRestOfWorld: false };
+  if (/\bcanada\b|\bcanadian\b/.test(title)) return { code: "ca", isRestOfWorld: false };
+  if (/\bbrazil\b|\bbrazilian\b/.test(title)) return { code: "br", isRestOfWorld: false };
+  if (/\bsouth korea\b|\bkorean\b/.test(title)) return { code: "kr", isRestOfWorld: false };
+  if (/\bsaudi arabia\b|\briyadh\b/.test(title)) return { code: "sa", isRestOfWorld: false };
+  if (/\bsingapore\b/.test(title)) return { code: "sg", isRestOfWorld: false };
+  if (/\bturkey\b|\bturkish\b|\bandkara\b/.test(title)) return { code: "tr", isRestOfWorld: false };
+  if (/\bpoland\b|\bpolish\b/.test(title)) return { code: "pl", isRestOfWorld: false };
+  if (/\bgreece\b|\bgreek\b/.test(title)) return { code: "gr", isRestOfWorld: false };
+  if (/\bromania\b|\bbucharest\b/.test(title)) return { code: "ro", isRestOfWorld: false };
+  if (/\bnigeria\b|\blagos\b/.test(title)) return { code: "ng", isRestOfWorld: false };
+  if (/\bsouth africa\b/.test(title)) return { code: "za", isRestOfWorld: false };
+  return { code: "us", isRestOfWorld: true }; // no match -> Rest of World
 }
 
 // NewsAPI category -> GeoNews category
@@ -337,8 +335,8 @@ async function syncNewsFromAPI() {
   const rows = allArticles
     .filter((a) => a.title && a.title !== "[Removed]" && a.url)
     .map((a) => {
-      const country = detectCountry(a);
-      const coords = COUNTRY_COORDS[country] || COUNTRY_COORDS["us"];
+      const { code, isRestOfWorld } = detectCountry(a);
+      const coords = COUNTRY_COORDS[code] || COUNTRY_COORDS["us"];
       const jitter = () => (Math.random() - 0.5) * 1.5;
       return {
         title: a.title,
@@ -348,6 +346,7 @@ async function syncNewsFromAPI() {
         category: CATEGORY_MAP[a._cat] || "Geopolitics",
         lat: coords.lat + jitter(),
         long: coords.lng + jitter(),
+        location_label: isRestOfWorld ? "ROW" : null,
         impact_score: inferImportance(a),
         sentiment: inferSentiment(a.title),
       };
@@ -733,12 +732,10 @@ app.get("/api/news", async (req, res) => {
                 query = query.eq("category", category);
             }
 
-            // daysAgo filter only works if timestamps exist in the table
+            // daysAgo filter: use created_at (timestamp column added by ensureTimestampColumn when DATABASE_URL set)
             if (daysAgo > 0) {
-                try {
-                    const since = new Date(Date.now() - daysAgo * 86400000).toISOString();
-                    query = query.gte("timestamp", since);
-                } catch { /* column may not exist - skip time filter */ }
+                const since = new Date(Date.now() - daysAgo * 86400000).toISOString();
+                query = query.gte("created_at", since);
             }
 
             const { data, error } = await query;
@@ -1152,11 +1149,49 @@ app.use((req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Ensure news_events.timestamp column exists (run once on startup if DATABASE_URL set)
+// Uses direct Postgres; set DATABASE_URL in backend/.env from Supabase Dashboard > Project Settings > Database > Connection string (URI)
+// ---------------------------------------------------------------------------
+async function ensureTimestampColumn() {
+    const databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) return;
+
+    const client = new PgClient({ connectionString: databaseUrl });
+    try {
+        await client.connect();
+        await client.query(`
+            ALTER TABLE news_events
+            ADD COLUMN IF NOT EXISTS timestamp timestamptz,
+            ADD COLUMN IF NOT EXISTS location_label text;
+        `);
+        await client.query(`
+            UPDATE news_events
+            SET timestamp = created_at
+            WHERE timestamp IS NULL AND created_at IS NOT NULL;
+        `);
+        await client.query(`
+            UPDATE news_events
+            SET timestamp = now()
+            WHERE timestamp IS NULL;
+        `);
+        console.log("[GeoNews] news_events.timestamp and location_label columns ensured");
+    } catch (err) {
+        console.warn("[GeoNews] Could not ensure timestamp column:", err.message);
+    } finally {
+        await client.end().catch(() => {});
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Server startup + graceful shutdown
 // ---------------------------------------------------------------------------
 let server;
 
 async function startServer() {
+    if (supabase && process.env.DATABASE_URL) {
+        await ensureTimestampColumn();
+    }
+
     // Startup connectivity check
     if (supabase) {
         try {
