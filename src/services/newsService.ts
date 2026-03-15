@@ -201,7 +201,8 @@ export async function deepResearch(newsItem: NewsItem): Promise<string> {
     return data.response;
   } catch (error) {
     console.error("Error during Deep Research:", error);
-    return "[OFFLINE] **Local Intelligence Offline** \n\nEnsure Ollama is running locally and the `llama3.2:1b` model is available.";
+    console.log(process.env.OLLAMA_HOST);
+    return "[OFFLINE] **Service Offline** \n\nEnsure Ollama is running and the `llama3.2:1b` model is available.";
   }
 }
 
