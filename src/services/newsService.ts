@@ -164,44 +164,28 @@ export async function fetchNews(
   }
 }
 
-// Deep Research using Local Llama 3 via Ollama
+// Deep Research via backend Groq API
 export async function deepResearch(newsItem: NewsItem): Promise<string> {
-  const prompt = `
-    You are a geopolitical intelligence analyst.
-    Analyze the following news event and provide a "Deep Research Causality Report":
-
-    Headline: ${newsItem.title}
-    Summary: ${newsItem.summary}
-    Category: ${newsItem.category}
-
-    Please provide:
-    1. Historical Context (What led to this?)
-    2. Primary Ripple Effects (Immediate economic/social impact)
-    3. Secondary Ripple Effects (Long-term global/supply chain impact)
-
-    Format the response in clean Markdown. Keep names and place names capitalized; do not normalize or lowercase them. Be concise and authoritative.
-  `;
-
   try {
-    const response = await fetch("http://localhost:11434/api/generate", {
+    const response = await fetch('http://localhost:5001/api/deep-research', {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "llama3.2:1b",
-        prompt,
-        stream: false
+        title: newsItem.title,
+        summary: newsItem.summary,
+        category: newsItem.category
       })
     });
 
     if (!response.ok) {
-      throw new Error("Local LLM not responding. Ensure Ollama is running.");
+      throw new Error(`Backend returned ${response.status}`);
     }
 
     const data = await response.json();
-    return data.response;
+    return data.report;
   } catch (error) {
     console.error("Error during Deep Research:", error);
-    return "[OFFLINE] **Local Intelligence Offline** \n\nEnsure Ollama is running locally and the `llama3.2:1b` model is available.";
+    return "**Analysis Unavailable**\n\nThe AI analysis service could not be reached. Please ensure the backend server is running.";
   }
 }
 

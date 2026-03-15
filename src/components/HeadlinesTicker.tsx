@@ -49,7 +49,7 @@ export default function HeadlinesTicker({ news, regionLabel, onHeadlineClick, bo
   if (topHeadlines.length === 0) return null;
 
   return (
-    <div className="fixed bottom-20 right-4 z-[100] pointer-events-auto max-w-[360px]">
+    <div className="fixed top-1/2 -translate-y-1/2 right-4 z-[100] pointer-events-auto max-w-[360px]">
       <motion.div
         initial={{ opacity: 0, y: 30 }}
         animate={{ opacity: 1, y: 0 }}

@@ -273,7 +273,7 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
           setIsOpen(true);
           setIsMinimized(false);
         }}
-        className="fixed bottom-20 right-6 z-[9999] h-12 w-12 rounded-full bg-[#00f0ff]/15 border border-[#00f0ff]/60 text-[#00f0ff] flex items-center justify-center hover:bg-[#00f0ff]/25 transition-colors"
+        className="fixed bottom-6 right-6 z-[9999] h-12 w-12 rounded-full bg-[#00f0ff]/15 border border-[#00f0ff]/60 text-[#00f0ff] flex items-center justify-center hover:bg-[#00f0ff]/25 transition-colors"
         aria-label="Open Command Assistant"
       >
         <MessageCircle size={20} />
@@ -282,7 +282,7 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
   }
 
   return (
-    <div className="fixed bottom-20 right-6 z-[9999] flex flex-col items-end">
+    <div className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end">
       <div className="w-[340px] h-[480px] rounded-2xl border border-[rgba(0,242,255,0.2)] flex flex-col backdrop-blur-[16px] bg-[rgba(10,20,25,0.6)]">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">

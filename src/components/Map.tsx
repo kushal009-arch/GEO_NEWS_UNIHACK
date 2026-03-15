@@ -358,7 +358,10 @@ const Map = memo(function Map({
     const el = document.createElement('div');
     el.style.cssText = `cursor:pointer;transform:translate(-50%,-100%);pointer-events:auto;filter:drop-shadow(0 2px 8px ${color}aa);transition:filter 0.25s ease,transform 0.25s ease;animation:pinFadeIn 0.4s ease-out`;
     el.title = item.title;
-    el.innerHTML = makeLocationPinSvg(color, size);
+    const inner = document.createElement('div');
+    inner.style.cssText = `animation:markerFloat ${3 + Math.random() * 2}s ease-in-out infinite`;
+    inner.innerHTML = makeLocationPinSvg(color, size);
+    el.appendChild(inner);
     el.addEventListener('mouseenter', () => {
       el.style.filter = `drop-shadow(0 0 12px ${color}) drop-shadow(0 0 24px ${color}88)`;
       el.style.transform = 'translate(-50%,-100%) scale(1.3)';
@@ -375,9 +378,8 @@ const Map = memo(function Map({
     if (effectiveZoom < 1 || effectiveZoom > 10) return [];
 
     return news.filter((item) => {
-      // At full globe, show everything importance >= 3 so pins are always present
-      if (effectiveZoom < 3) return item.importance >= 3;
-      if (effectiveZoom < 6) return item.importance >= 2;
+      // Show all items so the globe looks populated on initial load
+      if (effectiveZoom < 3) return item.importance >= 2;
       return true;
     });
   }, [news, effectiveZoom]);

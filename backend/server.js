@@ -1151,6 +1151,50 @@ Return ONLY the JSON object, no markdown.`;
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/deep-research - Generate a detailed causality report for a news item
+// Uses Groq (llama-3.1-8b-instant) to produce a structured intelligence report.
+// ---------------------------------------------------------------------------
+app.post("/api/deep-research", aiLimiter, async (req, res) => {
+    const groqKey = process.env.GROQ_API_KEY;
+    if (!groqKey) return res.status(503).json({ error: "GROQ_API_KEY not configured" });
+
+    const { title, summary, category } = req.body;
+    if (!title) return res.status(400).json({ error: "title is required" });
+
+    try {
+        const prompt = `You are a geopolitical intelligence analyst.
+Analyze the following news event and provide a "Deep Research Causality Report":
+
+Headline: ${title}
+Summary: ${summary || title}
+Category: ${category || "General"}
+
+Please provide:
+1. **Historical Context** (What led to this?)
+2. **Primary Ripple Effects** (Immediate economic/social impact)
+3. **Secondary Ripple Effects** (Long-term global/supply chain impact)
+4. **Risk Assessment** (Key risks and their likelihood)
+5. **Strategic Outlook** (What to watch for next)
+
+Format the response in clean Markdown with headers. Be concise and authoritative. Keep names and place names capitalized.`;
+
+        const raw = await callGroq([
+            { role: "system", content: "You are a senior geopolitical intelligence analyst providing deep-dive reports. Use markdown formatting with headers." },
+            { role: "user", content: prompt },
+        ], { max_tokens: 1024, temperature: 0.4 });
+
+        if (!raw) {
+            return res.status(503).json({ error: "AI service unavailable" });
+        }
+
+        res.json({ report: raw });
+    } catch (err) {
+        console.error("[GeoNews] /api/deep-research error:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ---------------------------------------------------------------------------
 // Global error handler - catches unhandled route errors
 // ---------------------------------------------------------------------------
 app.use((err, req, res, _next) => {

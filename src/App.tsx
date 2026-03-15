@@ -29,7 +29,7 @@ export default function App() {
   const [isDeepResearching, setIsDeepResearching] = useState(false);
   const [researchReport, setResearchReport] = useState<string | null>(null);
   const [locationLabel, setLocationLabel] = useState<string | null>(null);
-  const [isGlitching, setIsGlitching] = useState(false);
+
 
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [showSentiment, setShowSentiment] = useState(false);
@@ -151,9 +151,9 @@ export default function App() {
       return (a.title ?? '').localeCompare(b.title ?? '');
     });
 
-    // Cap at 20 events for the visible region
-    if (filtered.length > 20) {
-      filtered = filtered.slice(0, 20);
+    // Cap at 25 events for the visible region
+    if (filtered.length > 25) {
+      filtered = filtered.slice(0, 25);
     }
 
     return filtered;
@@ -255,8 +255,6 @@ export default function App() {
     setSelectedNews(item);
     setResearchReport(null);
     setLocationLabel(null);
-    setIsGlitching(true);
-    setTimeout(() => setIsGlitching(false), 320);
     // Use server-provided label (e.g. "ROW") or resolve via geocoding
     if (item.locationLabel) {
       setLocationLabel(item.locationLabel);
@@ -328,7 +326,7 @@ export default function App() {
   }, [handleMarkerClick]);
 
   return (
-    <div className={`relative h-full w-full bg-black font-sans text-white overflow-hidden ${isGlitching ? 'glitch-shake' : ''}`}>
+    <div className="relative h-full w-full bg-black font-sans text-white overflow-hidden">
       <NavigationHub
         activeCategory={activeCategory}
         onCategoryChange={setActiveCategory}
@@ -405,7 +403,7 @@ export default function App() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 500 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed top-0 right-0 h-[calc(100vh-32px)] w-[400px] bg-black/70 backdrop-blur-2xl border-l border-[#00f0ff]/20 z-[3000] flex flex-col shadow-[-20px_0_50px_rgba(0,0,0,0.5)]"
+            className="fixed top-0 right-0 h-full w-[400px] bg-black/70 backdrop-blur-2xl border-l border-[#00f0ff]/20 z-[3000] flex flex-col shadow-[-20px_0_50px_rgba(0,0,0,0.5)]"
           >
             <div className="p-6 border-b border-white/10 flex justify-between items-start bg-gradient-to-b from-[#00f0ff]/10 to-transparent">
               <div className="flex flex-col gap-2">
@@ -493,20 +491,33 @@ export default function App() {
                 {!researchReport && !isDeepResearching ? (
                   <button
                     onClick={handleDeepResearch}
-                    className="w-full relative group bg-black/40 border border-[#00f0ff]/30 hover:border-[#00f0ff]/70 rounded-xl p-4 transition-all duration-300 flex items-center justify-between overflow-hidden"
+                    className="w-full relative group rounded-xl p-5 transition-all duration-300 flex flex-col items-center gap-3 overflow-hidden bg-gradient-to-br from-[#00f0ff]/15 via-black/60 to-[#00f0ff]/10 border-2 border-[#00f0ff]/40 hover:border-[#00f0ff] cursor-pointer"
+                    style={{ animation: 'ctaPulse 2s ease-in-out infinite, ctaBorderGlow 2s ease-in-out infinite' }}
                   >
-                    <div className="absolute inset-0 bg-gradient-to-r from-[#00f0ff]/0 via-[#00f0ff]/10 to-[#00f0ff]/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
-                    <div className="flex flex-col text-left">
-                      <span className="font-bold text-white flex items-center gap-2 text-xs">
-                        <Zap size={14} className="text-[#00f0ff]" />
-                        Deep Scan
-                      </span>
-                      <span className="text-[9px] text-gray-500 mt-1 uppercase tracking-wider font-mono">
-                        Analysis with AI
-                      </span>
+                    {/* Shimmer sweep */}
+                    <div className="absolute inset-0 pointer-events-none" style={{ animation: 'shimmerSweep 3s ease-in-out infinite' }}>
+                      <div className="w-1/3 h-full bg-gradient-to-r from-transparent via-[#00f0ff]/20 to-transparent" />
                     </div>
-                    <div className="bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/50 text-[9px] font-bold px-3 py-1.5 rounded-lg group-hover:bg-[#00f0ff] group-hover:text-black transition-colors uppercase tracking-widest">
-                      Analyze
+
+                    {/* Zap icon with pulse */}
+                    <div className="relative">
+                      <div className="absolute inset-0 rounded-full bg-[#00f0ff]/20 blur-xl" />
+                      <Zap size={28} className="text-[#00f0ff] relative" style={{ animation: 'zapPulse 2s ease-in-out infinite', filter: 'drop-shadow(0 0 8px rgba(0,240,255,0.8))' }} />
+                    </div>
+
+                    {/* Main CTA text */}
+                    <div className="text-center relative z-10">
+                      <p className="text-sm font-extrabold text-white tracking-wide">
+                        Get AI Deep Analysis
+                      </p>
+                      <p className="text-[10px] text-[#00f0ff] mt-1 font-semibold tracking-widest uppercase">
+                        Click for a detailed intelligence report
+                      </p>
+                    </div>
+
+                    {/* Button badge */}
+                    <div className="relative z-10 bg-[#00f0ff] text-black text-[10px] font-extrabold px-5 py-2 rounded-lg uppercase tracking-widest group-hover:bg-white group-hover:text-black transition-colors shadow-[0_0_15px_rgba(0,240,255,0.5)]">
+                      Analyze Now
                     </div>
                   </button>
                 ) : isDeepResearching ? (
@@ -526,7 +537,7 @@ export default function App() {
                     <div className="bg-[#00f0ff]/10 border-b border-[#00f0ff]/30 px-4 py-3 flex items-center gap-2">
                       <Zap size={12} className="text-[#00f0ff]" />
                       <span className="text-[9px] font-bold text-[#00f0ff] uppercase tracking-widest">
-                        Ollama Intelligence Report
+                        AI Intelligence Report
                       </span>
                     </div>
                     <div className="p-5 prose prose-invert prose-emerald prose-xs max-w-none text-gray-300">

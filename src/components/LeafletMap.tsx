@@ -39,7 +39,7 @@ function createLocationIcon(color: string, importance: number): L.DivIcon {
   const size = importance >= 4 ? 28 : 22;
   const h = Math.round(size * 1.5);
   return L.divIcon({
-    html: `<div class="geo-leaflet-pin" style="width:${size}px;height:${h}px;filter:drop-shadow(0 2px 8px ${color}aa);transition:filter 0.25s ease,transform 0.25s ease">${makeLocationPinSvg(color, size)}</div>`,
+    html: `<div class="geo-leaflet-pin" style="width:${size}px;height:${h}px;filter:drop-shadow(0 2px 8px ${color}aa);transition:filter 0.25s ease,transform 0.25s ease;animation:markerFloat ${3 + Math.random() * 2}s ease-in-out infinite">${makeLocationPinSvg(color, size)}</div>`,
     className: '',
     iconSize: [size, h],
     iconAnchor: [size / 2, h],
