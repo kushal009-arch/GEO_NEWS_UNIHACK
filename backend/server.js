@@ -73,6 +73,12 @@ app.use("/api/chat", aiLimiter);
 app.use("/api/generate-forecasts", aiLimiter);
 
 // ---------------------------------------------------------------------------
+// Serve built frontend from dist/ (must be before API routes so index.html wins over app.get("/"))
+// ---------------------------------------------------------------------------
+const distPath = path.join(__dirname, "..", "dist");
+app.use(express.static(distPath));
+
+// ---------------------------------------------------------------------------
 // Supabase client (server-side, uses service role key)
 // ---------------------------------------------------------------------------
 const supabase =
@@ -667,7 +673,7 @@ function radiusByZoom(zoom) {
     return 180;
 }
 
-app.get("/", (req, res) => {
+app.get("/api/status", (req, res) => {
     res.json({
         status: "running",
         version: "2.0.0",
@@ -1191,12 +1197,6 @@ Format the response in clean Markdown with headers. Be concise and authoritative
         res.status(500).json({ error: err.message });
     }
 });
-
-// ---------------------------------------------------------------------------
-// Serve built frontend (production) — dist/ lives one level up from backend/
-// ---------------------------------------------------------------------------
-const distPath = path.join(__dirname, "..", "dist");
-app.use(express.static(distPath));
 
 // ---------------------------------------------------------------------------
 // Global error handler - catches unhandled route errors
