@@ -276,7 +276,7 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
           setIsOpen(true);
           setIsMinimized(false);
         }}
-        className="fixed bottom-6 right-6 z-[9999] h-12 w-12 rounded-full bg-[#00f0ff]/15 border border-[#00f0ff]/60 text-[#00f0ff] flex items-center justify-center hover:bg-[#00f0ff]/25 transition-colors"
+        className="fixed bottom-8 right-8 z-[9999] w-14 h-14 bg-[#00F5FF]/10 border border-[#00F5FF]/40 rounded-full flex items-center justify-center text-[#00F5FF] shadow-[0_0_20px_rgba(0,245,255,0.2)] hover:scale-110 active:scale-95 transition-all pulse-cyan"
         aria-label="Open Command Assistant"
       >
         <MessageCircle size={20} />
@@ -285,16 +285,15 @@ const CommandAssistant: React.FC<CommandAssistantProps> = ({ onCenterOnCountry, 
   }
 
   return (
-    <div className="fixed bottom-6 right-6 z-[9999] flex flex-col items-end">
-      <div className="w-[340px] h-[480px] rounded-2xl border border-[rgba(0,242,255,0.2)] flex flex-col backdrop-blur-[16px] bg-[rgba(10,20,25,0.6)]">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+    <div className="fixed bottom-8 right-8 z-[9999] flex flex-col items-end">
+      <div className="w-[340px] h-[480px] rounded-xl flex flex-col glass shadow-[0_8px_40px_rgba(0,0,0,0.6)] overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.06] bg-white/[0.03]">
           <div className="flex flex-col">
-            <span className="text-xs font-mono tracking-[0.16em] uppercase text-cyan-200">
-              Command Assistant
+            <span className="text-[10px] font-mono tracking-[0.2em] uppercase text-[#00F5FF]">
+              Command_Assistant
             </span>
-            <span className="text-[10px] text-slate-400 font-mono tracking-[0.12em] uppercase">
-              AI_CORE // HELP_CONSOLE
+            <span className="text-[9px] text-[#A1A1A1] font-mono tracking-[0.12em] uppercase">
+              AI_CORE // PORT_042
             </span>
           </div>
             <div className="flex items-center gap-1.5">

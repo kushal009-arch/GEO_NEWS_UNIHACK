@@ -1,12 +1,12 @@
 import { useMemo } from 'react';
-import { MapPin, ChevronRight } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { NewsItem } from '../types';
 
 const CATEGORY_COLORS: Record<string, string> = {
   Geopolitics: '#ff4d4d',
   Business:    '#f1c40f',
-  Technology:  '#00d4ff',
+  Technology:  '#00F5FF',
   Climate:     '#2ecc71',
 };
 
@@ -22,7 +22,6 @@ export default function HeadlinesTicker({ news, regionLabel, onHeadlineClick, bo
   const topHeadlines = useMemo(() => {
     let filtered = news;
 
-    // When zoomed in, filter to visible bounds so headlines match the region
     if (bounds && zoom && zoom >= 3) {
       try {
         const north = bounds.getNorth();
@@ -40,78 +39,93 @@ export default function HeadlinesTicker({ news, regionLabel, onHeadlineClick, bo
       } catch { /* bounds may not be ready */ }
     }
 
-    // Sort by importance, then take top 5
-    return [...filtered]
-      .sort((a, b) => b.importance - a.importance)
-      .slice(0, 5);
+    return [...filtered].sort((a, b) => b.importance - a.importance).slice(0, 7);
   }, [news, bounds, zoom]);
 
   if (topHeadlines.length === 0) return null;
 
+  const gridId = regionLabel
+    ? `GRID_${(regionLabel.charCodeAt(0) % 10).toString().padStart(2, '0')}`
+    : 'GRID_01';
+  const regionStr = regionLabel ? `${regionLabel} // ${gridId}` : `SE_ASIA // ${gridId}`;
+
   return (
-    <div className="fixed top-1/2 -translate-y-1/2 right-4 z-[100] pointer-events-auto max-w-[360px]">
-      <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="rounded-2xl border border-white/[0.08] bg-black/60 backdrop-blur-2xl shadow-[0_8px_40px_rgba(0,0,0,0.6)] overflow-hidden"
-      >
+    <div className="hidden md:flex fixed right-8 top-24 z-40 w-80 h-[calc(100vh-180px)] flex-col pointer-events-auto">
+      <div className="glass flex flex-col h-full rounded-xl overflow-hidden">
         {/* Header */}
-        <div className="px-4 py-2.5 border-b border-white/[0.06] flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shadow-[0_0_6px_rgba(255,0,0,0.5)]" />
-          <span className="text-[9px] font-mono font-bold tracking-[0.2em] uppercase text-white/60">
-            {regionLabel ? `${regionLabel} · Live Feed` : 'Global · Live Feed'}
+        <div className="px-5 py-3 border-b border-white/[0.06] bg-white/[0.03] flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[#00F5FF] animate-pulse shadow-[0_0_6px_rgba(0,245,255,0.7)]" />
+            <span className="text-[10px] font-mono font-bold tracking-[0.2em] uppercase text-white/80">
+              Intelligence_Feed
+            </span>
+          </div>
+          <span className="text-[9px] font-mono text-[#A1A1A1] uppercase tracking-wider truncate max-w-[120px]">
+            {regionStr}
           </span>
         </div>
 
-        {/* Headlines list */}
-        <div className="divide-y divide-white/[0.04]">
+        {/* Timeline body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-6 relative custom-scrollbar">
+          <div className="timeline-line" />
           <AnimatePresence mode="popLayout">
             {topHeadlines.map((item, i) => {
-              const color = CATEGORY_COLORS[item.category] ?? '#aaaaaa';
+              const color = CATEGORY_COLORS[item.category] ?? '#A1A1A1';
+              const isHigh = item.importance >= 4;
               return (
-                <motion.button
+                <motion.div
                   key={item.id}
-                  initial={{ opacity: 0, x: -20 }}
+                  initial={{ opacity: 0, x: 20 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: 20 }}
-                  transition={{ delay: i * 0.05 }}
+                  transition={{ delay: i * 0.04 }}
+                  className="relative pl-8 group cursor-pointer"
                   onClick={() => onHeadlineClick(item)}
-                  className="w-full text-left px-4 py-2.5 hover:bg-white/[0.04] transition-colors group flex items-start gap-3 cursor-pointer"
                 >
-                  {/* Location pin icon */}
-                  <div className="shrink-0 mt-0.5">
-                    <MapPin size={14} style={{ color }} className="drop-shadow-sm" />
-                  </div>
+                  {/* Timeline dot */}
+                  <div
+                    className={`absolute left-[16px] top-2 w-2 h-2 rounded-full border-2 z-10 ${isHigh ? 'animate-pulse' : ''}`}
+                    style={{ background: isHigh ? '#FF3B30' : color, borderColor: '#0c0f0f' }}
+                  />
 
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 mb-0.5">
-                      <span
-                        className="text-[8px] font-bold uppercase tracking-[0.15em] font-mono"
-                        style={{ color }}
-                      >
-                        {item.category}
-                      </span>
-                      {item.importance >= 4 && (
-                        <span className="text-[7px] font-bold uppercase tracking-wider text-red-400 bg-red-500/10 px-1 py-0.5 rounded">
-                          High Impact
+                  <div className={`p-3 rounded-lg border transition-all ${
+                    isHigh
+                      ? 'border-[#FF3B30]/30 bg-[#FF3B30]/[0.04] group-hover:bg-[#FF3B30]/[0.08]'
+                      : 'border-white/[0.06] group-hover:border-white/20'
+                  }`}>
+                    <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                      {isHigh && (
+                        <span className="text-[8px] font-mono text-[#FF3B30] uppercase tracking-widest flex items-center gap-1">
+                          <span className="w-1 h-1 rounded-full bg-[#FF3B30] inline-block animate-pulse" />
+                          Critical_Alert
                         </span>
                       )}
+                      <span className="text-[9px] font-mono uppercase tracking-wider" style={{ color }}>
+                        {item.category}
+                      </span>
                     </div>
-                    <p className="text-[11px] font-medium text-white/80 leading-snug line-clamp-2 group-hover:text-white transition-colors">
+                    <h3 className="text-[12px] font-semibold leading-snug mb-1.5 text-white/85 group-hover:text-[#00F5FF] transition-colors line-clamp-2">
                       {item.title}
-                    </p>
-                    <p className="text-[9px] text-white/30 mt-0.5 font-mono">
+                    </h3>
+                    <p className="text-[9px] font-mono text-[#A1A1A1] uppercase tracking-wider">
                       {item.source}
                     </p>
                   </div>
-
-                  <ChevronRight size={12} className="shrink-0 text-white/20 group-hover:text-white/50 mt-2 transition-colors" />
-                </motion.button>
+                </motion.div>
               );
             })}
           </AnimatePresence>
         </div>
-      </motion.div>
+
+        {/* Footer CTA */}
+        <div className="p-4 border-t border-white/[0.06] flex-shrink-0">
+          <button className="w-full glass py-2.5 rounded-lg text-[10px] font-mono uppercase tracking-widest flex items-center justify-center gap-2 text-[#00F5FF] border border-[#00F5FF]/20 hover:bg-[#00F5FF]/[0.06] transition-colors">
+            <RefreshCw size={11} />
+            Sync_Stream
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
+

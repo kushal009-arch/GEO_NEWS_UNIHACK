@@ -3,8 +3,23 @@ import Map from './components/Map';
 import NavigationHub from './components/NavigationHub';
 import CommandAssistant from './components/CommandAssistant';
 import HeadlinesTicker from './components/HeadlinesTicker';
+import SearchPanel from './components/SearchPanel';
 import { NewsCategory, NewsItem, TrendAnalysis, UserInterest } from './types';
-import { fetchNews, fetchAllNews, analyzeTrends, analyzeImage, deepResearch, syncLatestNews, isSyncNeeded, markSyncDone, invalidateNewsCache, getLocationLabel } from './services/newsService';
+import {
+  fetchNews,
+  fetchAllNews,
+  analyzeTrends,
+  analyzeImage,
+  deepResearch,
+  syncLatestNews,
+  isSyncNeeded,
+  markSyncDone,
+  invalidateNewsCache,
+  getLocationLabel,
+  loadInterests,
+  persistInterest,
+  deleteInterest,
+} from './services/newsService';
 import { getCountryCoordinates } from './services/countryCoordinates';
 import { Loader2, X, AlertCircle, Globe, Zap, MapPin } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -87,6 +102,19 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // On mount: load persisted user interests (Supabase via backend, falls back to localStorage)
+  useEffect(() => {
+    let cancelled = false;
+    loadInterests()
+      .then((stored) => {
+        if (!cancelled && stored && stored.length > 0) {
+          setInterests(stored);
+        }
+      })
+      .catch(() => { /* keep defaults */ });
+    return () => { cancelled = true; };
+  }, []);
+
   const loadNews = useCallback(async () => {
     if (applyCounter === 0) return;
 
@@ -120,7 +148,7 @@ export default function App() {
 
   // Client-side category + bounds filter - instant, no re-fetch
   // When zoomed in, only show news within the visible map area
-  const displayedNews = useMemo(() => {
+  const filteredAll = useMemo(() => {
     let filtered = news;
     if (activeCategory !== 'Just In' && activeCategory !== 'For You') {
       filtered = filtered.filter((item) => item.category === activeCategory);
@@ -145,19 +173,15 @@ export default function App() {
     }
 
     // Sort by impact (highest first), then alphabetically by title
-    filtered = [...filtered].sort((a, b) => {
+    return [...filtered].sort((a, b) => {
       const impDiff = (b.importance ?? 0) - (a.importance ?? 0);
       if (impDiff !== 0) return impDiff;
       return (a.title ?? '').localeCompare(b.title ?? '');
     });
-
-    // Cap at 25 events for the visible region
-    if (filtered.length > 25) {
-      filtered = filtered.slice(0, 25);
-    }
-
-    return filtered;
   }, [news, activeCategory, bounds, zoom]);
+
+  const displayedNews = useMemo(() => filteredAll.slice(0, 25), [filteredAll]);
+  const totalFilteredCount = filteredAll.length;
 
   // On startup: load news from the database (no live sync).
   // Live sync only happens when the user explicitly sets the temporal filter to
@@ -230,10 +254,12 @@ export default function App() {
     };
 
     setInterests((prev) => [...prev, newInterest]);
+    persistInterest(newInterest).catch(() => {});
   };
 
   const handleRemoveInterest = (id: string) => {
     setInterests((prev) => prev.filter((i) => i.id !== id));
+    deleteInterest(id).catch(() => {});
   };
 
   const handleDeepResearch = async () => {
@@ -326,8 +352,42 @@ export default function App() {
     handleMarkerClick(item);
   }, [handleMarkerClick]);
 
+  // Search result click: ensure item is in news state so detail panel works, then fly + open.
+  const handleSearchResult = useCallback((item: NewsItem) => {
+    setNews((prev) => (prev.some((n) => n.id === item.id) ? prev : [...prev, item]));
+    setCenterOn({ lat: item.lat, lng: item.lng, zoom: 6 });
+    handleMarkerClick(item);
+  }, [handleMarkerClick]);
+
+  // Compute proximity alerts: high-impact (>=4) events within ~5 degrees of any point interest,
+  // or within 10 degrees of any route segment. Surfaces in the nav drawer as a badge.
+  const alertItems = useMemo<NewsItem[]>(() => {
+    if (interests.length === 0) return [];
+    const out: NewsItem[] = [];
+    for (const n of news) {
+      if ((n.importance ?? 0) < 4) continue;
+      let near = false;
+      for (const interest of interests) {
+        if (interest.type === 'Travel Route' && interest.coords) {
+          for (const c of interest.coords) {
+            const dLat = n.lat - c[0];
+            const dLng = n.lng - c[1];
+            if (dLat * dLat + dLng * dLng < 100) { near = true; break; }
+          }
+        } else {
+          const dLat = n.lat - interest.lat;
+          const dLng = n.lng - interest.lng;
+          if (dLat * dLat + dLng * dLng < 25) { near = true; }
+        }
+        if (near) break;
+      }
+      if (near) out.push(n);
+    }
+    return out.slice(0, 50);
+  }, [news, interests]);
+
   return (
-    <div className="relative h-full w-full bg-black font-sans text-white overflow-hidden">
+    <div className="relative h-full w-full bg-[#0c0f0f] font-sans text-white overflow-hidden nebula-bg">
       <NavigationHub
         activeCategory={activeCategory}
         onCategoryChange={setActiveCategory}
@@ -340,6 +400,12 @@ export default function App() {
         daysAgo={daysAgo}
         setDaysAgo={setDaysAgo}
         news={news}
+        showHeatmap={showHeatmap}
+        setShowHeatmap={setShowHeatmap}
+        showSentiment={showSentiment}
+        setShowSentiment={setShowSentiment}
+        alertItems={alertItems}
+        onAlertItemClick={handleHeadlineClick}
         onApplyFilters={async () => {
           if (daysAgo === 0) {
             // Live mode: only sync when backend says data is stale (avoids 429 rate limit)
@@ -367,6 +433,16 @@ export default function App() {
         }}
       />
 
+      {/* HUD Wordmark - centered top, pointer-events-none so map stays interactive */}
+      <div className="fixed top-0 left-0 w-full z-[100] flex justify-center items-center py-5 pointer-events-none">
+        <span
+          className="text-3xl font-bold uppercase tracking-[0.3em] text-[#e9feff] select-none"
+          style={{ fontFamily: "'Space Grotesk', sans-serif", textShadow: '0 0 40px rgba(0,245,255,0.12)' }}
+        >
+          GEONEWS
+        </span>
+      </div>
+
       <main className="absolute inset-0 z-[1]">
         <Map
           news={displayedNews}
@@ -380,8 +456,12 @@ export default function App() {
           centerOn={centerOn}
           onCenterComplete={handleCenterComplete}
           activeCategory={activeCategory}
+          totalEvents={totalFilteredCount}
         />
       </main>
+
+      {/* Global search bar (top, keyboard '/' to focus) */}
+      <SearchPanel onResultClick={handleSearchResult} />
 
       <AnimatePresence>
         {isLoading && (
@@ -389,7 +469,7 @@ export default function App() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="fixed top-8 right-8 bg-black/80 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 flex items-center gap-2 z-[2000] shadow-xl"
+            className="fixed top-20 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md px-4 py-2 rounded-full border border-white/10 flex items-center gap-2 z-[2000] shadow-xl"
           >
             <Loader2 size={16} className="animate-spin text-emerald-500" />
             <span className="text-xs font-medium text-emerald-100">Syncing Local Data...</span>
@@ -404,7 +484,7 @@ export default function App() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 500 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed top-0 right-0 h-full w-[400px] bg-black/70 backdrop-blur-2xl border-l border-[#00f0ff]/20 z-[3000] flex flex-col shadow-[-20px_0_50px_rgba(0,0,0,0.5)]"
+            className="fixed top-0 right-0 h-full w-full sm:w-[400px] max-w-full bg-black/70 backdrop-blur-2xl border-l border-[#00f0ff]/20 z-[3000] flex flex-col shadow-[-20px_0_50px_rgba(0,0,0,0.5)]"
           >
             <div className="p-6 border-b border-white/10 flex justify-between items-start bg-gradient-to-b from-[#00f0ff]/10 to-transparent">
               <div className="flex flex-col gap-2">
@@ -594,6 +674,21 @@ export default function App() {
           zoom={zoom}
         />
       )}
+
+      {/* HUD Status Bar - bottom center */}
+      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[50] pointer-events-none">
+        <div className="glass flex items-center gap-5 px-7 py-2.5 rounded-full border border-[#00F5FF]/20 shadow-[0_0_20px_rgba(0,245,255,0.05)]">
+          <div className="flex items-center gap-2">
+            <span className="w-1.5 h-1.5 bg-[#00F5FF] rounded-full pulse-cyan" />
+            <span className="font-mono text-[10px] text-[#00F5FF] uppercase tracking-[0.2em]">System_Ready // Z3</span>
+          </div>
+          <div className="h-4 w-px bg-white/10" />
+          <div className="flex items-center gap-4 font-mono text-[10px] uppercase tracking-widest">
+            <span className="text-[#A1A1A1]">Protocol_Encrypted</span>
+            <span className="text-[#A1A1A1]">Lat_0.02ms</span>
+          </div>
+        </div>
+      </div>
 
       <div className="scanline-overlay fixed inset-0 z-[10000] pointer-events-none" />
     </div>

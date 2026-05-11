@@ -4,9 +4,7 @@ import { NewsCategory, NewsItem, TrendAnalysis, UserInterest } from "../types";
 // Temporarily keep AI disabled while debugging map + backend flow
 const ai = null;
 
-const BACKEND = import.meta.env.VITE_BACKEND_URL ?? (typeof window !== 'undefined' && window.location.hostname === 'localhost' ? 'http://localhost:5001' : '');
-
-// Backend-style filtering (mirrors backend/server.js) for local fallback
+const BACKEND = import.meta.env.VITE_BACKEND_URL ?? (typeof window !== 'undefined' && window.location.hostname === 'localhost' ? 'http://localhost:5001' : '');// Backend-style filtering (mirrors backend/server.js) for local fallback
 function distanceDegrees(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const dLat = lat1 - lat2;
   const dLng = lng1 - lng2;
@@ -192,6 +190,24 @@ export async function deepResearch(newsItem: NewsItem): Promise<string> {
 }
 
 export async function analyzeTrends(): Promise<TrendAnalysis[]> {
+  // Prefer live backend trends (Groq-grounded, 15-min cache)
+  try {
+    const res = await fetch(`${BACKEND}/api/trends`);
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return data.map((d) => ({
+          trend: String(d.trend ?? "Trend"),
+          prediction: String(d.prediction ?? ""),
+          impact: String(d.impact ?? ""),
+          confidence: Number(d.confidence ?? 0.7),
+        }));
+      }
+    }
+  } catch (err) {
+    console.warn("[GeoNews] /api/trends unreachable, using fallback:", err);
+  }
+
   if (ai) {
     const model = "gemini-3.1-pro-preview";
     const prompt = `
@@ -276,21 +292,39 @@ export async function fetchNewsFromSupabase(interests: UserInterest[] = []): Pro
   return fetchAllNews(interests);
 }
 /** Resolve coordinates to a human-readable location name via reverse geocoding, with ocean/region fallback. */
-export async function getLocationLabel(lat: number, lng: number): Promise<string> {
-  try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=5`,
-      { headers: { 'Accept-Language': 'en' } }
-    );
-    if (!res.ok) throw new Error('Nominatim error');
-    const data = await res.json();
-    const addr = data.address;
-    const name = addr?.city || addr?.town || addr?.state || addr?.country || data.display_name;
-    if (name && !/^\d/.test(name)) return name;
-  } catch { /* fall through to local lookup */ }
+const _geocodeCache = new Map<string, string>();
+const _geocodeInflight = new Map<string, Promise<string>>();
 
-  // Fallback: map coordinates to well-known ocean / region names
-  return getRegionFromCoords(lat, lng);
+export async function getLocationLabel(lat: number, lng: number): Promise<string> {
+  // Cache key rounded to ~3 decimal places (~110m) - good enough for news markers.
+  const key = `${lat.toFixed(3)},${lng.toFixed(3)}`;
+  const cached = _geocodeCache.get(key);
+  if (cached) return cached;
+
+  // De-dupe concurrent requests for the same coordinate.
+  const inflight = _geocodeInflight.get(key);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=5`,
+        { headers: { 'Accept-Language': 'en' } }
+      );
+      if (!res.ok) throw new Error('Nominatim error');
+      const data = await res.json();
+      const addr = data.address;
+      const name = addr?.city || addr?.town || addr?.state || addr?.country || data.display_name;
+      if (name && !/^\d/.test(name)) return name as string;
+    } catch { /* fall through to local lookup */ }
+    return getRegionFromCoords(lat, lng);
+  })();
+
+  _geocodeInflight.set(key, promise);
+  const result = await promise;
+  _geocodeInflight.delete(key);
+  _geocodeCache.set(key, result);
+  return result;
 }
 
 /** Offline region/ocean resolver for coordinates that Nominatim can't label. */
@@ -317,6 +351,26 @@ function getRegionFromCoords(lat: number, lng: number): string {
 }
 
 export async function analyzeImage(base64Image: string): Promise<string> {
+  // Prefer backend Groq vision endpoint
+  try {
+    const res = await fetch(`${BACKEND}/api/analyze-image`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: base64Image, mimeType: "image/jpeg" })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.analysis) return data.analysis as string;
+    } else if (res.status === 413) {
+      return "Image too large. Please use an image under 4 MB.";
+    } else {
+      const err = await res.json().catch(() => ({}));
+      console.warn("[GeoNews] analyze-image backend error", res.status, err);
+    }
+  } catch (err) {
+    console.warn("[GeoNews] analyze-image backend unreachable:", err);
+  }
+
   if (ai) {
     const model = "gemini-3.1-pro-preview";
     try {
@@ -335,5 +389,94 @@ export async function analyzeImage(base64Image: string): Promise<string> {
     }
   }
 
-  return "Image analysis requires the Gemini API.";
+  return "Image analysis is currently unavailable. Ensure the backend server is running and GROQ_API_KEY is configured.";
+}
+
+// ---------------------------------------------------------------------------
+// Search: full-text query against the news catalogue (backend, Supabase-backed).
+// ---------------------------------------------------------------------------
+export async function searchNews(query: string): Promise<NewsItem[]> {
+  const q = query.trim();
+  if (!q) return [];
+  try {
+    const res = await fetch(`${BACKEND}/api/news/search?q=${encodeURIComponent(q)}`);
+    if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+    const data: NewsItem[] = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch (err) {
+    console.warn("[GeoNews] searchNews failed:", err);
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// User Interests persistence (browser-scoped userId in localStorage + backend sync).
+// ---------------------------------------------------------------------------
+const USER_ID_KEY = "geonews.userId";
+
+export function getOrCreateUserId(): string {
+  if (typeof window === "undefined") return "anonymous";
+  let id = window.localStorage.getItem(USER_ID_KEY);
+  if (!id) {
+    id = `u_${Math.random().toString(36).slice(2, 10)}_${Date.now().toString(36)}`;
+    try { window.localStorage.setItem(USER_ID_KEY, id); } catch { /* ignore */ }
+  }
+  return id;
+}
+
+const INTERESTS_LOCAL_KEY = "geonews.interests";
+
+function loadLocalInterests(): UserInterest[] | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(INTERESTS_LOCAL_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch { return null; }
+}
+
+function saveLocalInterests(interests: UserInterest[]): void {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(INTERESTS_LOCAL_KEY, JSON.stringify(interests)); } catch { /* ignore */ }
+}
+
+export async function loadInterests(): Promise<UserInterest[] | null> {
+  const userId = getOrCreateUserId();
+  try {
+    const res = await fetch(`${BACKEND}/api/interests?userId=${encodeURIComponent(userId)}`);
+    if (res.ok) {
+      const data: UserInterest[] = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        saveLocalInterests(data);
+        return data;
+      }
+    }
+  } catch { /* offline fallback */ }
+  return loadLocalInterests();
+}
+
+export async function persistInterest(interest: UserInterest): Promise<void> {
+  const userId = getOrCreateUserId();
+  const existing = loadLocalInterests() || [];
+  const next = [...existing.filter((i) => i.id !== interest.id), interest];
+  saveLocalInterests(next);
+  try {
+    await fetch(`${BACKEND}/api/interests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, interest })
+    });
+  } catch { /* fine - local copy persisted */ }
+}
+
+export async function deleteInterest(id: string): Promise<void> {
+  const userId = getOrCreateUserId();
+  const existing = loadLocalInterests() || [];
+  saveLocalInterests(existing.filter((i) => i.id !== id));
+  try {
+    await fetch(`${BACKEND}/api/interests/${encodeURIComponent(id)}?userId=${encodeURIComponent(userId)}`, {
+      method: "DELETE"
+    });
+  } catch { /* ignore */ }
 }

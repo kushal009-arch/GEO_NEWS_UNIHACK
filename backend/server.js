@@ -332,18 +332,33 @@ async function syncNewsFromAPI() {
   const allArticles = [];
 
   for (const cat of categories) {
-    try {
-      const url =
-        `https://newsapi.org/v2/top-headlines` +
-        `?category=${cat}&language=en&pageSize=20&apiKey=${encodeURIComponent(apiKey)}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`NewsAPI ${res.status}: ${await res.text()}`);
-      const json = await res.json();
-      if (json.articles) {
-        allArticles.push(...json.articles.map((a) => ({ ...a, _cat: cat })));
+    const url =
+      `https://newsapi.org/v2/top-headlines` +
+      `?category=${cat}&language=en&pageSize=20&apiKey=${encodeURIComponent(apiKey)}`;
+    let success = false;
+    // Retry up to 3 times with exponential backoff on 429 or transient errors
+    for (let attempt = 0; attempt < 3 && !success; attempt++) {
+      try {
+        const res = await fetch(url);
+        if (res.status === 429 || res.status === 503) {
+          const delay = 1000 * Math.pow(2, attempt); // 1s, 2s, 4s
+          console.warn(`[GeoNews] NewsAPI ${res.status} for '${cat}', retrying in ${delay}ms (attempt ${attempt + 1}/3)`);
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+        if (!res.ok) throw new Error(`NewsAPI ${res.status}: ${await res.text()}`);
+        const json = await res.json();
+        if (json.articles) {
+          allArticles.push(...json.articles.map((a) => ({ ...a, _cat: cat })));
+        }
+        success = true;
+      } catch (err) {
+        if (attempt === 2) {
+          console.error(`[GeoNews] NewsAPI fetch failed for category '${cat}' after 3 attempts:`, err.message);
+        } else {
+          await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
+        }
       }
-    } catch (err) {
-      console.error(`[GeoNews] NewsAPI fetch failed for category '${cat}':`, err.message);
     }
   }
 
@@ -1194,6 +1209,260 @@ Format the response in clean Markdown with headers. Be concise and authoritative
         res.json({ report: raw });
     } catch (err) {
         console.error("[GeoNews] /api/deep-research error:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/analyze-image - Analyze an uploaded image in news/geopolitical context
+// Body: { image: base64-encoded jpeg/png string, mimeType?: "image/jpeg" }
+// Uses Groq's vision model (llama-3.2-11b-vision-preview) when available.
+// ---------------------------------------------------------------------------
+app.post("/api/analyze-image", aiLimiter, async (req, res) => {
+    const groqKey = process.env.GROQ_API_KEY;
+    if (!groqKey) return res.status(503).json({ error: "GROQ_API_KEY not configured" });
+
+    const { image, mimeType = "image/jpeg", prompt } = req.body || {};
+    if (!image || typeof image !== "string") {
+        return res.status(400).json({ error: "image (base64 string) is required" });
+    }
+    // Hard size cap (~6 MB after base64 expansion -> ~4.5 MB raw)
+    if (image.length > 6_000_000) {
+        return res.status(413).json({ error: "Image too large (max ~4 MB)" });
+    }
+
+    try {
+        const dataUrl = `data:${mimeType};base64,${image}`;
+        const userPrompt =
+            prompt ||
+            "Analyze this image in the context of current global news, geopolitics, economy, climate, or technology. " +
+            "Identify what is shown, any visible location/event markers, and explain the potential strategic or news significance. " +
+            "Keep it concise (4-6 sentences) and authoritative.";
+
+        const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${groqKey}`,
+            },
+            body: JSON.stringify({
+                model: "llama-3.2-11b-vision-preview",
+                messages: [
+                    {
+                        role: "user",
+                        content: [
+                            { type: "text", text: userPrompt },
+                            { type: "image_url", image_url: { url: dataUrl } },
+                        ],
+                    },
+                ],
+                temperature: 0.4,
+                max_tokens: 600,
+            }),
+        });
+
+        if (!groqRes.ok) {
+            const errText = await groqRes.text();
+            console.error("[GeoNews] /api/analyze-image Groq error:", groqRes.status, errText);
+            return res.status(502).json({ error: `Vision model error (${groqRes.status})` });
+        }
+        const data = await groqRes.json();
+        const analysis = data.choices?.[0]?.message?.content || "No analysis returned.";
+        res.json({ analysis });
+    } catch (err) {
+        console.error("[GeoNews] /api/analyze-image error:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/trends - Generate live trend predictions from recent headlines
+// Uses Groq LLM grounded in the latest news_events rows.
+// Cache TTL: 15 minutes (in-memory) to control AI cost.
+// ---------------------------------------------------------------------------
+let _trendsCache = { at: 0, data: null };
+const TRENDS_TTL_MS = 15 * 60 * 1000;
+
+app.get("/api/trends", apiLimiter, async (req, res) => {
+    if (_trendsCache.data && Date.now() - _trendsCache.at < TRENDS_TTL_MS) {
+        return res.json(_trendsCache.data);
+    }
+
+    const groqKey = process.env.GROQ_API_KEY;
+    if (!groqKey || !supabase) {
+        return res.json(_staticTrendsFallback());
+    }
+
+    try {
+        const { data: recent } = await supabase
+            .from("news_events")
+            .select("title, category, sentiment")
+            .order("created_at", { ascending: false })
+            .limit(40);
+
+        const headlines = (recent || [])
+            .map((r) => `- [${r.category}] ${r.title} (${r.sentiment || "Neutral"})`)
+            .join("\n");
+
+        const prompt = `Based on these recent global headlines, predict 4 important trends for the next 7-14 days.
+Return a JSON array of exactly 4 objects:
+[{ "trend": "...", "prediction": "...", "impact": "...", "confidence": 0.0-1.0 }]
+
+trend  = short label (3-5 words)
+prediction = specific 1-sentence forecast
+impact = 1-sentence consequence
+confidence = number between 0 and 1
+
+Headlines:
+${headlines || "(no recent data)"}
+
+Return ONLY the JSON array.`;
+
+        const raw = await callGroq([
+            { role: "system", content: "You are a geopolitical forecaster. Return ONLY a valid JSON array." },
+            { role: "user", content: prompt },
+        ], { temperature: 0.4, max_tokens: 700 });
+
+        if (!raw) return res.json(_staticTrendsFallback());
+
+        const clean = raw.replace(/```json\n?|\n?```/g, "").trim();
+        let parsed;
+        try {
+            parsed = JSON.parse(clean);
+        } catch {
+            // Try to extract first JSON array from response
+            const m = clean.match(/\[[\s\S]*\]/);
+            if (m) parsed = JSON.parse(m[0]);
+            else throw new Error("Could not parse trends JSON");
+        }
+
+        if (!Array.isArray(parsed)) throw new Error("Trends response was not an array");
+
+        _trendsCache = { at: Date.now(), data: parsed };
+        res.json(parsed);
+    } catch (err) {
+        console.error("[GeoNews] /api/trends error:", err.message);
+        res.json(_staticTrendsFallback());
+    }
+});
+
+function _staticTrendsFallback() {
+    return [
+        { trend: "Accelerated AGI Timelines", prediction: "Tech stocks surge by ~10-15%", impact: "Global capital rebalancing toward semiconductors and infra", confidence: 0.78 },
+        { trend: "Strained Ocean Freight", prediction: "Container costs trend upward as alternate routes congest", impact: "Higher consumer goods prices in import-heavy economies", confidence: 0.82 },
+        { trend: "Energy Market Volatility", prediction: "Crude oscillates on geopolitical risk premia", impact: "Pressure on transport-dependent supply chains", confidence: 0.74 },
+        { trend: "Cyber Threat Escalation", prediction: "Increased state-aligned activity around critical infra", confidence: 0.71, impact: "Insurance + downtime exposure rises across sectors" },
+    ];
+}
+
+// ---------------------------------------------------------------------------
+// User Interests API - persists user-defined points/routes to Supabase.
+// Requires table (run once in Supabase SQL editor):
+//
+//   create table if not exists user_interests (
+//     id          text primary key,
+//     user_id     text not null,
+//     name        text not null,
+//     type        text not null,
+//     lat         double precision,
+//     lng         double precision,
+//     radius      int,
+//     coords      jsonb,
+//     created_at  timestamptz default now()
+//   );
+//   create index if not exists user_interests_user_id_idx on user_interests(user_id);
+//
+// If the table is missing, endpoints respond with 200 + empty array (no error)
+// so the frontend gracefully falls back to localStorage-only persistence.
+// ---------------------------------------------------------------------------
+app.get("/api/interests", apiLimiter, async (req, res) => {
+    const userId = String(req.query.userId || "").trim();
+    if (!userId) return res.status(400).json({ error: "userId is required" });
+    if (!supabase) return res.json([]);
+
+    try {
+        const { data, error } = await supabase
+            .from("user_interests")
+            .select("*")
+            .eq("user_id", userId)
+            .order("created_at", { ascending: true });
+        if (error) {
+            // Missing table -> degrade gracefully
+            if (/relation .*user_interests.* does not exist/i.test(error.message)) return res.json([]);
+            throw error;
+        }
+        res.json(
+            (data || []).map((r) => ({
+                id: r.id,
+                name: r.name,
+                type: r.type,
+                lat: Number(r.lat) || 0,
+                lng: Number(r.lng) || 0,
+                radius: Number(r.radius) || 0,
+                coords: r.coords || undefined,
+            }))
+        );
+    } catch (err) {
+        console.error("[GeoNews] /api/interests GET error:", err.message);
+        res.json([]); // never block UI on this
+    }
+});
+
+app.post("/api/interests", apiLimiter, async (req, res) => {
+    const { userId, interest } = req.body || {};
+    if (!userId || !interest?.id || !interest?.name) {
+        return res.status(400).json({ error: "userId and full interest object required" });
+    }
+    if (!supabase) return res.json({ ok: true, persisted: false });
+
+    try {
+        const { error } = await supabase.from("user_interests").upsert(
+            {
+                id: interest.id,
+                user_id: userId,
+                name: interest.name,
+                type: interest.type,
+                lat: interest.lat ?? 0,
+                lng: interest.lng ?? 0,
+                radius: interest.radius ?? 0,
+                coords: interest.coords ?? null,
+            },
+            { onConflict: "id" }
+        );
+        if (error) {
+            if (/relation .*user_interests.* does not exist/i.test(error.message)) {
+                return res.json({ ok: true, persisted: false, note: "user_interests table not created" });
+            }
+            throw error;
+        }
+        res.json({ ok: true, persisted: true });
+    } catch (err) {
+        console.error("[GeoNews] /api/interests POST error:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete("/api/interests/:id", apiLimiter, async (req, res) => {
+    const id = req.params.id;
+    const userId = String(req.query.userId || "").trim();
+    if (!userId) return res.status(400).json({ error: "userId is required" });
+    if (!supabase) return res.json({ ok: true, persisted: false });
+
+    try {
+        const { error } = await supabase
+            .from("user_interests")
+            .delete()
+            .eq("id", id)
+            .eq("user_id", userId);
+        if (error) {
+            if (/relation .*user_interests.* does not exist/i.test(error.message)) {
+                return res.json({ ok: true, persisted: false });
+            }
+            throw error;
+        }
+        res.json({ ok: true, persisted: true });
+    } catch (err) {
+        console.error("[GeoNews] /api/interests DELETE error:", err.message);
         res.status(500).json({ error: err.message });
     }
 });

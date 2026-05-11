@@ -17,9 +17,11 @@ import {
   Cpu,
   X,
   Shield,
-  ChevronLeft,
-  ChevronRight,
-  Layers
+  Layers,
+  Flame,
+  Smile,
+  Bell,
+  AlertTriangle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import StrategicDashboard from './StrategicDashboard';
@@ -38,19 +40,29 @@ interface NavigationHubProps {
   onApplyFilters: () => void;
   onSyncNews?: () => void;
   news?: NewsItem[];
+  /** Toggle the info-density (info-vacuum) heatmap on the map. */
+  showHeatmap?: boolean;
+  setShowHeatmap?: (v: boolean) => void;
+  /** Toggle the sentiment heatmap on the map. */
+  showSentiment?: boolean;
+  setShowSentiment?: (v: boolean) => void;
+  /** Proximity alerts: high-impact news near user interests. */
+  alertItems?: NewsItem[];
+  onAlertItemClick?: (item: NewsItem) => void;
 }
 
 type DisplayCategory = {
   value: NewsCategory;
   label: string;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+  shortLabel: string;
+  icon: React.ComponentType<{ size?: number; className?: string; style?: React.CSSProperties }>;
 };
 
 const displayCategories: DisplayCategory[] = [
-  { value: 'Geopolitics', label: 'Geopolitics', icon: Globe2 },
-  { value: 'Climate', label: 'Climate', icon: CloudRain },
-  { value: 'Business', label: 'Economy', icon: BarChart3 },
-  { value: 'Technology', label: 'Tech', icon: Cpu }
+  { value: 'Geopolitics', label: 'Geopolitics', shortLabel: 'GEO',  icon: Globe2 },
+  { value: 'Climate',     label: 'Climate',     shortLabel: 'CLIM', icon: CloudRain },
+  { value: 'Business',    label: 'Economy',     shortLabel: 'ECON', icon: BarChart3 },
+  { value: 'Technology',  label: 'Tech',        shortLabel: 'TECH', icon: Cpu },
 ];
 
 const signalFilters = ['Energy', 'Shipping', 'Elections', 'AI', 'Cybersecurity', 'Climate Tech'];
@@ -203,14 +215,22 @@ export default function NavigationHub({
   setDaysAgo,
   onApplyFilters,
   onSyncNews,
-  news
+  news,
+  showHeatmap = false,
+  setShowHeatmap,
+  showSentiment = false,
+  setShowSentiment,
+  alertItems = [],
+  onAlertItemClick,
 }: NavigationHubProps) {
   const [activeAnalyticsSector, setActiveAnalyticsSector] = useState<AnalyticsSector>('Geopolitics');
+  const [showAlerts, setShowAlerts] = useState(false);
   const currentAnalytics = analyticsContent[activeAnalyticsSector] ?? analyticsContent.Geopolitics;
   const drawerRef = useRef<HTMLDivElement | null>(null);
   const analyticsRef = useRef<HTMLDivElement | null>(null);
+  const alertsRef = useRef<HTMLDivElement | null>(null);
 
-  // Global click-outside handler for both drawer and analytics
+  // Global click-outside handler for drawer, analytics, and alerts
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       const target = event.target as Node | null;
@@ -222,25 +242,20 @@ export default function NavigationHub({
       if (isAnalyticsOpen && analyticsRef.current && target && !analyticsRef.current.contains(target)) {
         setIsAnalyticsOpen(false);
       }
+
+      if (showAlerts && alertsRef.current && target && !alertsRef.current.contains(target)) {
+        setShowAlerts(false);
+      }
     }
 
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isSidebarOpen, isAnalyticsOpen, setIsSidebarOpen, setIsAnalyticsOpen]);
+  }, [isSidebarOpen, isAnalyticsOpen, showAlerts, setIsSidebarOpen, setIsAnalyticsOpen]);
 
   return (
     <>
-      {/* Branding anchored top-right */}
-      <div className="fixed top-6 right-6 z-[10] flex flex-col items-end gap-2">
-        <div className="rounded-[28px] border border-[rgba(0,242,255,0.1)] bg-[rgba(0,0,0,0.3)] backdrop-blur-[20px] px-5 py-2 shadow-[0_0_30px_rgba(0,240,255,0.08)]">
-          <span className="text-[20px] font-semibold tracking-[0.3em] text-cyan-100 uppercase font-mono">
-            GEONEWS
-          </span>
-        </div>
-      </div>
-
-      {/* Analytics button centered top-middle */}
-      <div className="fixed top-6 left-1/2 z-[10] -translate-x-1/2">
+      {/* Analytics + Alerts - top right */}
+      <div className="fixed top-5 right-6 z-[10] flex items-center gap-2">
         <button
           onClick={() => {
             setIsAnalyticsOpen(!isAnalyticsOpen);
@@ -254,19 +269,122 @@ export default function NavigationHub({
           <BarChart3 size={14} />
           <span>// ANALYTICS</span>
         </button>
+
+        {/* Alerts button + dropdown for proximity-impact items near user interests */}
+        <div className="relative" ref={alertsRef}>
+          <button
+            onClick={() => setShowAlerts((v) => !v)}
+            className={`relative inline-flex items-center gap-2 rounded-full border bg-[rgba(0,0,0,0.3)] backdrop-blur-[20px] px-4 py-2 text-[10px] font-mono uppercase tracking-[0.18em] transition ${
+              alertItems.length > 0
+                ? 'border-amber-400/60 text-amber-200 hover:border-amber-300 shadow-[0_0_18px_rgba(251,191,36,0.18)]'
+                : 'border-white/15 text-white/60 hover:border-white/30'
+            }`}
+            aria-label="Alerts"
+          >
+            <Bell size={14} />
+            <span>// ALERTS</span>
+            {alertItems.length > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-[9px] font-bold text-white flex items-center justify-center shadow-[0_0_8px_rgba(239,68,68,0.7)]">
+                {alertItems.length > 99 ? '99+' : alertItems.length}
+              </span>
+            )}
+          </button>
+
+          <AnimatePresence>
+            {showAlerts && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.15 }}
+                className="absolute top-[calc(100%+8px)] right-0 w-[min(360px,calc(100vw-32px))] rounded-2xl border border-white/[0.08] bg-black/85 backdrop-blur-2xl overflow-hidden shadow-[0_10px_40px_rgba(0,0,0,0.55)]"
+              >
+                <div className="px-4 py-2.5 border-b border-white/[0.06] flex items-center gap-2">
+                  <AlertTriangle size={12} className="text-amber-300" />
+                  <span className="text-[9px] font-mono font-bold tracking-[0.2em] uppercase text-amber-200/85">
+                    Proximity Alerts
+                  </span>
+                  <span className="ml-auto text-[9px] font-mono text-white/40">
+                    {alertItems.length} active
+                  </span>
+                </div>
+                {alertItems.length === 0 ? (
+                  <div className="px-4 py-5 text-[11px] text-white/45 font-mono">
+                    No high-impact events near your tracked interests.
+                  </div>
+                ) : (
+                  <div className="max-h-[60vh] overflow-y-auto divide-y divide-white/[0.04]">
+                    {alertItems.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => {
+                          onAlertItemClick?.(item);
+                          setShowAlerts(false);
+                        }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-white/[0.05] transition-colors group flex items-start gap-2 cursor-pointer"
+                      >
+                        <span className="mt-1 w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse shrink-0 shadow-[0_0_6px_rgba(239,68,68,0.6)]" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[8px] font-bold uppercase tracking-[0.18em] font-mono text-amber-300/85 mb-0.5">
+                            {item.category}
+                          </p>
+                          <p className="text-[11px] font-medium text-white/85 leading-snug line-clamp-2 group-hover:text-white">
+                            {item.title}
+                          </p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
 
-      {/* Navigation drawer + toggle - vertically centered left */}
+      {/* Left Icon Dock + Filter Panel */}
       <div
         ref={drawerRef}
-        className="fixed left-0 top-1/2 z-[10] -translate-y-1/2 flex items-center gap-2"
+        className="fixed left-8 top-24 z-40 flex items-start gap-3"
       >
-        <button
-          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-          className="h-14 w-10 rounded-r-2xl border border-white/15 bg-black/70 backdrop-blur-xl flex items-center justify-center text-white/70 hover:text-white hover:border-cyan-300 transition-colors"
-        >
-          {isSidebarOpen ? <ChevronLeft size={22} /> : <ChevronRight size={22} />}
-        </button>
+        {/* Icon Dock - always visible */}
+        <div className="glass flex flex-col items-center py-6 rounded-2xl gap-6 w-[72px]">
+          <button
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            className={`flex flex-col items-center gap-1.5 transition-colors ${
+              isSidebarOpen ? 'text-[#00F5FF]' : 'text-[#A1A1A1] hover:text-[#00F5FF]'
+            }`}
+            title="Filters & Layers"
+          >
+            <Layers size={22} />
+          </button>
+          <div className="w-8 h-px bg-white/10" />
+          {displayCategories.map((category) => {
+            const Icon = category.icon;
+            const isActive = activeCategory === category.value;
+            const catColor = CAT_COLOR[category.value] ?? '#22d3ee';
+            return (
+              <button
+                key={category.value}
+                onClick={() => isActive ? onCategoryChange('Just In') : onCategoryChange(category.value)}
+                className="flex flex-col items-center gap-1 transition-colors group"
+                title={category.label}
+              >
+                <Icon
+                  size={22}
+                  style={{ color: isActive ? catColor : undefined }}
+                  className={isActive ? '' : 'text-[#A1A1A1] group-hover:text-[#00F5FF]'}
+                />
+                <span
+                  className="text-[8px] font-mono uppercase tracking-wider"
+                  style={{ color: isActive ? catColor : '#A1A1A1' }}
+                >
+                  {category.shortLabel}
+                </span>
+              </button>
+            );
+          })}
+        </div>
 
         <AnimatePresence>
           {isSidebarOpen && (
@@ -274,7 +392,7 @@ export default function NavigationHub({
               initial={{ opacity: 0, x: -16 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -16 }}
-              className="flex flex-col gap-4 ml-2 mr-4 backdrop-blur-[10px]"
+              className="flex flex-col gap-4 max-h-[calc(100vh-200px)] overflow-y-auto pr-1 custom-scrollbar"
             >
             {/* News Categories - bottom-left above temporal filter */}
             <div className="w-[280px] max-w-[calc(100vw-80px)] rounded-[20px] border border-[rgba(0,242,255,0.1)] bg-[rgba(0,0,0,0.3)] backdrop-blur-[20px] px-3 pt-2 pb-3">
@@ -360,6 +478,47 @@ export default function NavigationHub({
                 })}
               </div>
             </div>
+
+            {/* Heatmap layer toggles */}
+            {(setShowHeatmap || setShowSentiment) && (
+              <div className="w-[280px] rounded-[20px] border border-[rgba(0,242,255,0.1)] bg-[rgba(0,0,0,0.3)] backdrop-blur-[20px] px-3 py-2">
+                <div className="mb-2 text-[10px] font-mono tracking-[0.18em] uppercase text-slate-400">
+                  // MAP_LAYERS
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {setShowHeatmap && (
+                    <button
+                      onClick={() => setShowHeatmap(!showHeatmap)}
+                      className={`rounded-[12px] border px-2 py-2 flex flex-col items-center gap-1 transition ${
+                        showHeatmap
+                          ? 'border-orange-400/70 bg-orange-400/10 text-orange-200 shadow-[0_0_15px_rgba(251,146,60,0.18)]'
+                          : 'border-white/15 text-white/60 hover:border-white/30'
+                      }`}
+                    >
+                      <Flame size={14} />
+                      <span className="text-[9px] font-mono font-semibold uppercase tracking-[0.12em]">
+                        Density
+                      </span>
+                    </button>
+                  )}
+                  {setShowSentiment && (
+                    <button
+                      onClick={() => setShowSentiment(!showSentiment)}
+                      className={`rounded-[12px] border px-2 py-2 flex flex-col items-center gap-1 transition ${
+                        showSentiment
+                          ? 'border-emerald-400/70 bg-emerald-400/10 text-emerald-200 shadow-[0_0_15px_rgba(34,197,94,0.18)]'
+                          : 'border-white/15 text-white/60 hover:border-white/30'
+                      }`}
+                    >
+                      <Smile size={14} />
+                      <span className="text-[9px] font-mono font-semibold uppercase tracking-[0.12em]">
+                        Sentiment
+                      </span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Temporal Filter - placed at bottom of drawer group */}
             <div className="w-[280px] rounded-[20px] border border-[rgba(0,242,255,0.1)] bg-[rgba(0,0,0,0.3)] backdrop-blur-[20px] p-4">

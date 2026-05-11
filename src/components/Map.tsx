@@ -21,6 +21,8 @@ interface MapProps {
   onCenterComplete?: () => void;
   /** Active category - dims non-matching globe markers for focus */
   activeCategory?: NewsCategory;
+  /** Total events available before the 25-cap is applied (for the status bar). */
+  totalEvents?: number;
 }
 
 const cartoDbUrl = (x: number, y: number, l: number) =>
@@ -88,6 +90,7 @@ const Map = memo(function Map({
   centerOn = null,
   onCenterComplete,
   activeCategory,
+  totalEvents,
 }: MapProps) {
   const globeRef = useRef<any>(null);
   const starsRef = useRef<THREE.Points | null>(null);
@@ -514,6 +517,8 @@ const Map = memo(function Map({
           news={visibleNews}
           onBoundsChange={onBoundsChange}
           onMarkerClick={onMarkerClick}
+          showHeatmap={showHeatmap}
+          showSentiment={showSentiment}
         />
       </div>
 
@@ -549,6 +554,34 @@ const Map = memo(function Map({
               return lng;
             }}
             htmlAltitude={0.02}
+            hexBinPointsData={(showHeatmap || showSentiment) ? visibleNews : []}
+            hexBinPointLat={(d: object) => (d as NewsItem).lat}
+            hexBinPointLng={(d: object) => (d as NewsItem).lng}
+            hexBinPointWeight={(d: object) => Math.max(1, (d as NewsItem).importance || 3)}
+            hexBinResolution={3}
+            hexMargin={0.2}
+            hexTopColor={(d: any) => {
+              const points = (d.points || []) as NewsItem[];
+              const sumWeight = Number(d.sumWeight ?? 0);
+              if (showSentiment) {
+                const negSet = new Set(['Negative', 'Anxious', 'Panic']);
+                const posSet = new Set(['Positive', 'Celebratory']);
+                let neg = 0, pos = 0;
+                for (const p of points) {
+                  if (negSet.has(p.sentiment)) neg++;
+                  else if (posSet.has(p.sentiment)) pos++;
+                }
+                if (neg > pos) return 'rgba(239,68,68,0.85)';
+                if (pos > neg) return 'rgba(34,197,94,0.85)';
+                return 'rgba(148,163,184,0.7)';
+              }
+              const intensity = Math.min(1, sumWeight / 15);
+              const r = Math.round(255 * intensity);
+              const g = Math.round(200 * (1 - intensity * 0.6));
+              return `rgba(${r}, ${g}, 80, 0.85)`;
+            }}
+            hexAltitude={(d: any) => Math.min(0.18, Number(d.sumWeight ?? 0) * 0.012)}
+            hexSideColor={() => 'rgba(255,255,255,0.05)'}
             pathsData={visibleRoutes}
             pathPoints={getPathPoints}
             pathPointLat={(p: number[]) => p[0]}
@@ -573,7 +606,9 @@ const Map = memo(function Map({
           </div>
           <div className="w-px h-3 bg-white/10" />
           <span className="text-[9px] font-mono uppercase tracking-[0.2em] text-white/30">
-            {visibleNews.length} Events
+            {totalEvents != null && totalEvents > visibleNews.length
+              ? `Showing ${visibleNews.length} of ${totalEvents} - zoom in for more`
+              : `${visibleNews.length} Events`}
           </span>
         </div>
       </div>

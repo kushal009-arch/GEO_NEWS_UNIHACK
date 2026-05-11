@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap } from 're
 import type { LatLngExpression } from 'leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import 'leaflet.heat';
 import { NewsItem } from '../types';
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -53,6 +54,10 @@ interface LeafletMapViewProps {
   news: NewsItem[];
   onBoundsChange: (bounds: any, zoom: number) => void;
   onMarkerClick: (item: NewsItem) => void;
+  /** Density / info-vacuum heatmap based on news importance. */
+  showHeatmap?: boolean;
+  /** Sentiment heatmap: red = negative, green = positive. */
+  showSentiment?: boolean;
 }
 
 function CenterController({
@@ -103,12 +108,89 @@ function BoundsReporter({ onBoundsChange }: { onBoundsChange: (bounds: any, zoom
   return null;
 }
 
+/**
+ * HeatLayer - renders a leaflet.heat overlay.
+ * Mode 'density' weights points by importance (info-vacuum: areas with high event volume).
+ * Mode 'sentiment' uses two layers (negative red / positive green) for sentiment polarity.
+ */
+function HeatLayer({ news, mode }: { news: NewsItem[]; mode: 'density' | 'sentiment' }) {
+  const map = useMap();
+  const layersRef = useRef<L.Layer[]>([]);
+
+  useEffect(() => {
+    // Clean up previous layers
+    layersRef.current.forEach((layer) => map.removeLayer(layer));
+    layersRef.current = [];
+
+    const heatFn = (L as any).heatLayer;
+    if (typeof heatFn !== 'function') return;
+
+    if (mode === 'density') {
+      const points: [number, number, number][] = news
+        .filter((n) => Number.isFinite(n.lat) && Number.isFinite(n.lng))
+        .map((n) => [n.lat, n.lng, Math.max(0.2, (n.importance || 3) / 5)]);
+      if (points.length === 0) return;
+      const layer = heatFn(points, {
+        radius: 35,
+        blur: 25,
+        maxZoom: 12,
+        minOpacity: 0.35,
+        gradient: { 0.2: '#3b82f6', 0.45: '#06b6d4', 0.65: '#facc15', 0.85: '#f97316', 1.0: '#ef4444' }
+      });
+      layer.addTo(map);
+      layersRef.current.push(layer);
+    } else {
+      const negativeSet = new Set(['Negative', 'Anxious', 'Panic']);
+      const positiveSet = new Set(['Positive', 'Celebratory']);
+      const negPoints: [number, number, number][] = [];
+      const posPoints: [number, number, number][] = [];
+      for (const n of news) {
+        if (!Number.isFinite(n.lat) || !Number.isFinite(n.lng)) continue;
+        const weight = Math.max(0.25, (n.importance || 3) / 5);
+        if (negativeSet.has(n.sentiment)) negPoints.push([n.lat, n.lng, weight]);
+        else if (positiveSet.has(n.sentiment)) posPoints.push([n.lat, n.lng, weight]);
+      }
+      if (negPoints.length > 0) {
+        const neg = heatFn(negPoints, {
+          radius: 38,
+          blur: 28,
+          maxZoom: 12,
+          minOpacity: 0.4,
+          gradient: { 0.2: 'rgba(239,68,68,0.0)', 0.5: '#ef4444', 1.0: '#7f1d1d' }
+        });
+        neg.addTo(map);
+        layersRef.current.push(neg);
+      }
+      if (posPoints.length > 0) {
+        const pos = heatFn(posPoints, {
+          radius: 32,
+          blur: 24,
+          maxZoom: 12,
+          minOpacity: 0.35,
+          gradient: { 0.2: 'rgba(34,197,94,0.0)', 0.5: '#22c55e', 1.0: '#14532d' }
+        });
+        pos.addTo(map);
+        layersRef.current.push(pos);
+      }
+    }
+
+    return () => {
+      layersRef.current.forEach((layer) => map.removeLayer(layer));
+      layersRef.current = [];
+    };
+  }, [news, mode, map]);
+
+  return null;
+}
+
 export default function LeafletMapView({
   center,
   zoom,
   news,
   onBoundsChange,
-  onMarkerClick
+  onMarkerClick,
+  showHeatmap = false,
+  showSentiment = false
 }: LeafletMapViewProps) {
   const centerCoord: LatLngExpression = center ? [center.lat, center.lng] : [0, 0];
   const effectiveZoom = Math.max(3, Math.min(16, zoom));
@@ -198,6 +280,8 @@ export default function LeafletMapView({
 
       <CenterController center={center} zoom={effectiveZoom} />
       <BoundsReporter onBoundsChange={onBoundsChange} />
+      {showHeatmap && <HeatLayer news={news} mode="density" />}
+      {showSentiment && <HeatLayer news={news} mode="sentiment" />}
     </MapContainer>
   );
 }
